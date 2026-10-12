@@ -1,31 +1,21 @@
-// 日志轮询组件：轮询 /Api/NLog/File，增量渲染，轮转防护，错误退避
+// 日志轮询组件：轮询 /Api/NLog/File，增量渲染，轮转防护
+// 轮询调度（退避/隐藏暂停/暂停开关）统一由 usePolling 承担
 import { useEffect, useRef, useState } from "react";
 import { apiRaw } from "../lib/api";
+import { usePolling } from "../hooks/usePolling";
 
 const MAX_LINES = 1000;
 
 export default function LogViewer({ serverId }: { serverId: number }) {
   const [lines, setLines] = useState<string[]>([]);
-  const [paused, setPaused] = useState(false);
-  const [lastError, setLastError] = useState("");
+  const [pollErr, setPollErr] = useState("");
   const boxRef = useRef<HTMLDivElement>(null);
   const stickyRef = useRef(true);
   const lastLengthRef = useRef(0);
   const seenRef = useRef(new Set<string>());
-  const pauseRef = useRef(false);
-  const mountedRef = useRef(true);
 
-  useEffect(() => {
-    mountedRef.current = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let failCount = 0;
-    let stopped = false;
-
-    async function poll() {
-      if (stopped || pauseRef.current || document.visibilityState === "hidden") {
-        schedule();
-        return;
-      }
+  const { paused, togglePause } = usePolling(
+    async () => {
       try {
         const resp = await apiRaw(`/api/proxy/${serverId}/NLog/File`, { method: "GET" });
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -41,10 +31,9 @@ export default function LogViewer({ serverId }: { serverId: number }) {
 
         const fresh: string[] = [];
         for (const line of linesArr.slice(0, MAX_LINES)) {
-          const key = line;
-          if (!key) continue;
-          if (!seenRef.current.has(key)) {
-            seenRef.current.add(key);
+          if (!line) continue;
+          if (!seenRef.current.has(line)) {
+            seenRef.current.add(line);
             fresh.push(line);
           }
         }
@@ -61,48 +50,28 @@ export default function LogViewer({ serverId }: { serverId: number }) {
             }
           });
         }
-        failCount = 0;
-        setLastError("");
+        setPollErr("");
       } catch {
-        failCount = Math.min(failCount + 1, 6);
-        setLastError("日志获取失败，正在重试…");
+        setPollErr("日志获取失败，正在重试…");
+        throw new Error("poll failed"); // 触发 usePolling 指数退避
       }
-      schedule();
-    }
+    },
+    3000,
+    { pauseWhenHidden: true, backoff: true, immediate: true }
+  );
 
-    function schedule() {
-      if (stopped) return;
-      const delay = failCount === 0 ? 3000 : Math.min(3000 * Math.pow(2, failCount), 30000);
-      timer = setTimeout(() => void poll(), delay);
-    }
-
-    function onVisibility() {
-      if (document.visibilityState === "visible") void poll();
-    }
-    document.addEventListener("visibilitychange", onVisibility);
-
-    void poll();
-
-    return () => {
-      stopped = true;
-      mountedRef.current = false;
-      if (timer) clearTimeout(timer);
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  // 切换服务器时重置日志状态
+  useEffect(() => {
+    lastLengthRef.current = 0;
+    seenRef.current = new Set();
+    setLines([]);
+    setPollErr("");
   }, [serverId]);
 
   function onScroll() {
     const el = boxRef.current;
     if (!el) return;
     stickyRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-  }
-
-  function togglePause() {
-    setPaused((p) => {
-      pauseRef.current = !p;
-      return !p;
-    });
   }
 
   return (
@@ -123,7 +92,7 @@ export default function LogViewer({ serverId }: { serverId: number }) {
         >
           清空
         </button>
-        {lastError && <span style={{ color: "var(--danger)", fontSize: 12 }}>{lastError}</span>}
+        {pollErr && <span style={{ color: "var(--danger)", fontSize: 12 }}>{pollErr}</span>}
       </div>
       <div className="logbox" ref={boxRef} onScroll={onScroll}>
         {lines.length === 0 && <div style={{ color: "#64748b" }}>暂无日志…</div>}
