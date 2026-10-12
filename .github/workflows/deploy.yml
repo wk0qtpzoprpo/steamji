@@ -4,12 +4,12 @@
 # 用法：fork 本仓库 → Settings → Secrets and variables → Actions 配置以下 secrets →
 #       Actions 页面点击「Run workflow」→ 等待 ~5 分钟 → 查看运行摘要即可开箱使用。
 #
-# 【必填 secrets】（必须且只需以下 3 个，无需 API Token）
-#   CLOUDFLARE_ACCOUNT_ID   Cloudflare 账户 ID（Dashboard 右上角我的个人资料可见）
+# 【必填 secrets】（必须且只需以下 2 个）
 #   CLOUDFLARE_API_KEY      Cloudflare Global API Key
 #   CLOUDFLARE_EMAIL        账户邮箱
 #
-# 【可选 secrets】（不填则自动随机生成，无需配置）
+# 【可选 secrets】（不填则自动处理）
+#   CLOUDFLARE_ACCOUNT_ID   Cloudflare 账户 ID（不填则由 API Key 自动获取，多个账户时建议填写）
 #   INIT_ADMIN_USERNAME   初始管理员用户名（默认 admin）
 #   INIT_ADMIN_PASSWORD   初始管理员密码（不填则自动生成，部署后在运行摘要中查看）
 #   JWT_SECRET / ENCRYPT_KEY / CRON_TOKEN
@@ -45,12 +45,21 @@ jobs:
       - name: 校验认证并生成密钥
         run: |
           set -euo pipefail
-          if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
-            echo "::error::缺少必填 secret：CLOUDFLARE_ACCOUNT_ID"; exit 1
-          fi
           if [ -z "${CLOUDFLARE_API_KEY:-}" ] || [ -z "${CLOUDFLARE_EMAIL:-}" ]; then
             echo "::error::缺少必填 secret：CLOUDFLARE_API_KEY 或 CLOUDFLARE_EMAIL"; exit 1
           fi
+          # 账户 ID 未提供时，用 API Key + 邮箱自动获取（取第一个账户）
+          if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
+            echo "未配置 CLOUDFLARE_ACCOUNT_ID，自动获取账户 ID…"
+            CLOUDFLARE_ACCOUNT_ID=$(curl -s "https://api.cloudflare.com/client/v4/accounts" \
+              -H "X-Auth-Email: $CLOUDFLARE_EMAIL" -H "X-Auth-Key: $CLOUDFLARE_API_KEY" | python3 -c \
+              "import sys,json;r=json.load(sys.stdin).get('result',[]);print(r[0]['id'] if r else '')")
+            if [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+              echo "::error::无法自动获取账户 ID：请检查 API Key/邮箱是否正确，或手动配置 CLOUDFLARE_ACCOUNT_ID"; exit 1
+            fi
+            echo "自动获取账户 ID: $CLOUDFLARE_ACCOUNT_ID"
+          fi
+          echo "CLOUDFLARE_ACCOUNT_ID=$CLOUDFLARE_ACCOUNT_ID" >> "$GITHUB_ENV"
           # 已配置的 secrets 优先，否则自动生成
           JWT_SECRET="${JWT_SECRET_USER:-$(openssl rand -hex 32)}"
           ENCRYPT_KEY="${ENCRYPT_KEY_USER:-$(openssl rand -hex 32)}"

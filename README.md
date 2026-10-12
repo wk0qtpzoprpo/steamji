@@ -158,9 +158,9 @@ npx wrangler deploy --config worker-cron/wrangler.toml
 
 | Secret | 说明 |
 |---|---|
-| `CLOUDFLARE_ACCOUNT_ID` | **必填**。Cloudflare 账户 ID |
 | `CLOUDFLARE_API_KEY` | **必填**。Global API Key（Dashboard → 我的个人资料 → API 令牌） |
 | `CLOUDFLARE_EMAIL` | **必填**。账户邮箱 |
+| `CLOUDFLARE_ACCOUNT_ID` | 可选。账户 ID（**不填自动获取**；仅当同一邮箱下存在多个 Cloudflare 账户时建议填写） |
 | `INIT_ADMIN_USERNAME` | 可选。初始管理员用户名（默认 `admin`） |
 | `INIT_ADMIN_PASSWORD` | 可选。初始管理员密码（**不填则自动生成**，部署后在运行摘要查看，请立即登录修改） |
 | `JWT_SECRET` / `ENCRYPT_KEY` / `CRON_TOKEN` | 可选。不填自动随机生成 |
