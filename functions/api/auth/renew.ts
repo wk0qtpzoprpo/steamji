@@ -5,14 +5,11 @@ import type { PagesFunction } from "@cloudflare/workers-types";
 import type { Env, UserRow } from "../../lib/db.ts";
 import { ok, fail } from "../../lib/db.ts";
 import { verifyPassword } from "../../lib/crypto.ts";
+import { parseJson } from "../../lib/http.ts";
 
 export const onRequestPost: PagesFunction<Env> = async ({ request, env, data }) => {
-  let body: { invite_code?: string; username?: string; password?: string };
-  try {
-    body = (await request.json()) as typeof body;
-  } catch {
-    return fail("请求体必须是 JSON");
-  }
+  const body = await parseJson<{ invite_code?: string; username?: string; password?: string }>(request);
+  if (!body) return fail("请求体必须是 JSON");
   const inviteCode = (body.invite_code || "").trim();
   if (!inviteCode) return fail("缺少月卡邀请码");
 

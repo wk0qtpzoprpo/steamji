@@ -3,16 +3,13 @@ import type { PagesFunction } from "@cloudflare/workers-types";
 import type { Env, UserRow } from "../../lib/db.ts";
 import { ok, fail } from "../../lib/db.ts";
 import { signJwt } from "../../lib/jwt.ts";
+import { parseJson } from "../../lib/http.ts";
 
 const REFRESH_TTL = 30 * 24 * 3600;
 
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
-  let body: { refresh_token?: string };
-  try {
-    body = (await request.json()) as typeof body;
-  } catch {
-    return fail("请求体必须是 JSON");
-  }
+  const body = await parseJson<{ refresh_token?: string }>(request);
+  if (!body) return fail("请求体必须是 JSON");
   const token = (body.refresh_token || "").trim();
   if (!token) return fail("缺少 refresh_token");
 

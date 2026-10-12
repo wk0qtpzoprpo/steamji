@@ -4,6 +4,7 @@ import type { Env, ServerRow } from "../../lib/db.ts";
 import { ok, fail } from "../../lib/db.ts";
 import { encryptData } from "../../lib/crypto.ts";
 import { pingAsf, proxyToAsf } from "../../lib/asf.ts";
+import { parseJson, requireAdmin } from "../../lib/http.ts";
 
 type Params = { id: string };
 
@@ -51,17 +52,15 @@ export const onRequestGet: PagesFunction<Env, Params> = async ({ env, data, para
 
 export const onRequestPut: PagesFunction<Env, Params> = async ({ request, env, data, params }) => {
   const user = data.user as { role: string };
-  if (user.role !== "admin") return fail("需要管理员权限", 403);
+  const denied = requireAdmin(user);
+  if (denied) return denied;
   const server = await env.DB.prepare("SELECT * FROM servers WHERE id = ?").bind(Number(params.id)).first<ServerRow>();
   if (!server) return fail("服务器不存在", 404);
 
   let body: { name?: string; tunnel_url?: string; asf_password?: string };
-  try {
-    body = (await request.json()) as typeof body;
-  } catch {
-    return fail("请求体必须是 JSON");
-  }
-
+  const parsed = await parseJson<{ name?: string; tunnel_url?: string; asf_password?: string }>(request);
+  if (!parsed) return fail("请求体必须是 JSON");
+  body = parsed;
   const name = body.name !== undefined ? (body.name || "").trim() : server.name;
   let tunnelUrl = body.tunnel_url !== undefined ? (body.tunnel_url || "").trim() : server.tunnel_url;
   if (tunnelUrl && !/^https?:\/\//.test(tunnelUrl)) tunnelUrl = `https://${tunnelUrl}`;
@@ -94,7 +93,8 @@ export const onRequestPut: PagesFunction<Env, Params> = async ({ request, env, d
 
 export const onRequestDelete: PagesFunction<Env, Params> = async ({ env, data, params }) => {
   const user = data.user as { role: string };
-  if (user.role !== "admin") return fail("需要管理员权限", 403);
+  const denied = requireAdmin(user);
+  if (denied) return denied;
   const server = await env.DB.prepare("SELECT * FROM servers WHERE id = ?").bind(Number(params.id)).first<ServerRow>();
   if (!server) return fail("服务器不存在", 404);
 
@@ -110,7 +110,8 @@ export const onRequestDelete: PagesFunction<Env, Params> = async ({ env, data, p
 // 供管理员测试连接
 export const onRequestPost: PagesFunction<Env, Params> = async ({ env, data, params }) => {
   const user = data.user as { role: string };
-  if (user.role !== "admin") return fail("需要管理员权限", 403);
+  const denied = requireAdmin(user);
+  if (denied) return denied;
   const server = await env.DB.prepare("SELECT * FROM servers WHERE id = ?").bind(Number(params.id)).first<ServerRow>();
   if (!server) return fail("服务器不存在", 404);
   const ping = await pingAsf(env, server);

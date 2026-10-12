@@ -3,16 +3,13 @@ import type { PagesFunction } from "@cloudflare/workers-types";
 import type { Env } from "../../lib/db.ts";
 import { ok, fail } from "../../lib/db.ts";
 import { hashPassword, verifyPassword } from "../../lib/crypto.ts";
+import { parseJson } from "../../lib/http.ts";
 
 export const onRequestPost: PagesFunction<Env> = async ({ request, env, data }) => {
   const user = data.user as { id: number; username: string; role: string };
 
-  let body: { old_password?: string; new_password?: string };
-  try {
-    body = (await request.json()) as typeof body;
-  } catch {
-    return fail("请求体必须是 JSON");
-  }
+  const body = await parseJson<{ old_password?: string; new_password?: string }>(request);
+  if (!body) return fail("请求体必须是 JSON");
   const oldPassword = body.old_password || "";
   const newPassword = body.new_password || "";
 

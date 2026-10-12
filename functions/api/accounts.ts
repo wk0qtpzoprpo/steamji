@@ -5,6 +5,7 @@ import type { Env, ServerRow } from "../lib/db.ts";
 import { ok, fail } from "../lib/db.ts";
 import { encryptData } from "../lib/crypto.ts";
 import { proxyToAsf } from "../lib/asf.ts";
+import { parseJson } from "../lib/http.ts";
 
 // 普通用户可见的账号字段白名单（隐藏 original_server_id / migration_logs / 密码）
 function sanitizeAccount(row: Record<string, unknown>) {
@@ -36,12 +37,8 @@ export const onRequestGet: PagesFunction<Env> = async ({ env, data }) => {
 
 export const onRequestPost: PagesFunction<Env> = async ({ request, env, data }) => {
   const user = data.user as { id: number; username: string; role: string };
-  let body: { bot_name?: string; steam_username?: string; password?: string; online_status?: number };
-  try {
-    body = (await request.json()) as typeof body;
-  } catch {
-    return fail("请求体必须是 JSON");
-  }
+  const body = await parseJson<{ bot_name?: string; steam_username?: string; password?: string; online_status?: number }>(request);
+  if (!body) return fail("请求体必须是 JSON");
   const botName = (body.bot_name || "").trim();
   const steamUsername = (body.steam_username || "").trim();
   const password = body.password || "";

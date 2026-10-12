@@ -4,16 +4,13 @@ import type { Env, UserRow } from "../../lib/db.ts";
 import { ok, fail } from "../../lib/db.ts";
 import { verifyPassword } from "../../lib/crypto.ts";
 import { signJwt } from "../../lib/jwt.ts";
+import { parseJson } from "../../lib/http.ts";
 
 const REFRESH_TTL = 30 * 24 * 3600; // 30 天
 
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
-  let body: { username?: string; password?: string };
-  try {
-    body = (await request.json()) as typeof body;
-  } catch {
-    return fail("请求体必须是 JSON");
-  }
+  const body = await parseJson<{ username?: string; password?: string }>(request);
+  if (!body) return fail("请求体必须是 JSON");
   const username = (body.username || "").trim();
   const password = body.password || "";
   if (!username || !password) return fail("用户名和密码不能为空");

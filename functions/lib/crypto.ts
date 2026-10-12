@@ -77,3 +77,16 @@ export async function decryptData(data: EncryptedData, encryptKey: string): Prom
   const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64ToBytes(data.iv) }, key, b64ToBytes(data.ct));
   return decoder.decode(pt);
 }
+
+// 解密账号密码：扫码登录账号可能无密码密文，统一回退空串（ASF 凭 refresh token 自动登录）
+export async function decryptAccountPassword(
+  account: { password_iv?: string | null; password_ct?: string | null },
+  encryptKey: string
+): Promise<string> {
+  if (!account.password_ct) return "";
+  try {
+    return await decryptData({ iv: account.password_iv!, ct: account.password_ct }, encryptKey);
+  } catch {
+    return "";
+  }
+}

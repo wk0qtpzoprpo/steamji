@@ -2,10 +2,12 @@
 import type { PagesFunction } from "@cloudflare/workers-types";
 import type { Env } from "../../lib/db.ts";
 import { ok, fail } from "../../lib/db.ts";
+import { parseJson, requireAdmin } from "../../lib/http.ts";
 
 export const onRequestGet: PagesFunction<Env> = async ({ env, data }) => {
   const user = data.user as { role: string };
-  if (user.role !== "admin") return fail("需要管理员权限", 403);
+  const denied = requireAdmin(user);
+  if (denied) return denied;
   const rows = await env.DB.prepare(
     "SELECT id, content, created_at, updated_at FROM announcements ORDER BY id DESC LIMIT 200"
   ).all();
@@ -14,13 +16,10 @@ export const onRequestGet: PagesFunction<Env> = async ({ env, data }) => {
 
 export const onRequestPost: PagesFunction<Env> = async ({ request, env, data }) => {
   const user = data.user as { role: string };
-  if (user.role !== "admin") return fail("需要管理员权限", 403);
-  let body: { content?: string };
-  try {
-    body = (await request.json()) as typeof body;
-  } catch {
-    return fail("请求体必须是 JSON");
-  }
+  const denied = requireAdmin(user);
+  if (denied) return denied;
+  const body = await parseJson<{ content?: string }>(request);
+  if (!body) return fail("请求体必须是 JSON");
   const content = (body.content || "").trim();
   if (!content) return fail("公告内容不能为空");
   if (content.length > 500) return fail("公告内容最多 500 字");

@@ -2,6 +2,7 @@
 import type { PagesFunction } from "@cloudflare/workers-types";
 import type { Env } from "../lib/db.ts";
 import { ok, fail } from "../lib/db.ts";
+import { parseJson, requireAdmin } from "../lib/http.ts";
 
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // 去掉易混字符 I/O/0/1
 
@@ -13,7 +14,8 @@ function generateCode(len = 12): string {
 
 export const onRequestGet: PagesFunction<Env> = async ({ env, data }) => {
   const user = data.user as { role: string };
-  if (user.role !== "admin") return fail("需要管理员权限", 403);
+  const denied = requireAdmin(user);
+  if (denied) return denied;
   const rows = await env.DB.prepare(
     `SELECT c.*, u.username AS created_by_name
      FROM invite_codes c LEFT JOIN users u ON c.created_by = u.id
@@ -24,15 +26,12 @@ export const onRequestGet: PagesFunction<Env> = async ({ env, data }) => {
 
 export const onRequestPost: PagesFunction<Env> = async ({ request, env, data }) => {
   const user = data.user as { id: number; role: string };
-  if (user.role !== "admin") return fail("需要管理员权限", 403);
-  let body: {
+  const denied = requireAdmin(user);
+  if (denied) return denied;
+  const body = await parseJson<{
     duration_days?: number; max_uses?: number; role?: string; expires_at?: string; remark?: string;
-  };
-  try {
-    body = (await request.json()) as typeof body;
-  } catch {
-    return fail("请求体必须是 JSON");
-  }
+  }>(request);
+  if (!body) return fail("请求体必须是 JSON");
   const durationDays = Math.max(1, Math.min(3650, Math.floor(body.duration_days ?? 30)));
   const maxUses = Math.max(1, Math.min(1000, Math.floor(body.max_uses ?? 1)));
   const role = body.role === "admin" ? "admin" : "user";

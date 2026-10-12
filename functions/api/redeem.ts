@@ -4,16 +4,13 @@
 import type { PagesFunction } from "@cloudflare/workers-types";
 import type { Env } from "../lib/db.ts";
 import { ok, fail } from "../lib/db.ts";
+import { parseJson } from "../lib/http.ts";
 
 export const onRequestPost: PagesFunction<Env> = async ({ request, env, data }) => {
   const user = data.user as { id: number; username: string; role: string };
 
-  let body: { code?: string; slot_id?: number };
-  try {
-    body = (await request.json()) as typeof body;
-  } catch {
-    return fail("请求体必须是 JSON");
-  }
+  const body = await parseJson<{ code?: string; slot_id?: number }>(request);
+  if (!body) return fail("请求体必须是 JSON");
   const code = (body.code || "").trim().toUpperCase();
   if (!code) return fail("请输入卡密");
 

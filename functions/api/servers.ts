@@ -4,6 +4,7 @@ import type { Env, ServerRow } from "../lib/db.ts";
 import { ok, fail } from "../lib/db.ts";
 import { encryptData } from "../lib/crypto.ts";
 import { pingAsf } from "../lib/asf.ts";
+import { parseJson, requireAdmin } from "../lib/http.ts";
 
 function sanitizeServer(row: ServerRow) {
   return {
@@ -20,21 +21,19 @@ function sanitizeServer(row: ServerRow) {
 
 export const onRequestGet: PagesFunction<Env> = async ({ env, data }) => {
   const user = data.user as { role: string };
-  if (user.role !== "admin") return fail("需要管理员权限", 403);
+  const denied = requireAdmin(user);
+  if (denied) return denied;
   const rows = await env.DB.prepare("SELECT * FROM servers ORDER BY id ASC").all<ServerRow>();
   return ok(rows.results.map(sanitizeServer));
 };
 
 export const onRequestPost: PagesFunction<Env> = async ({ request, env, data }) => {
   const user = data.user as { role: string };
-  if (user.role !== "admin") return fail("需要管理员权限", 403);
+  const denied = requireAdmin(user);
+  if (denied) return denied;
 
-  let body: { name?: string; tunnel_url?: string; asf_password?: string };
-  try {
-    body = (await request.json()) as typeof body;
-  } catch {
-    return fail("请求体必须是 JSON");
-  }
+  const body = await parseJson<{ name?: string; tunnel_url?: string; asf_password?: string }>(request);
+  if (!body) return fail("请求体必须是 JSON");
   const name = (body.name || "").trim();
   let tunnelUrl = (body.tunnel_url || "").trim();
   if (!name || !tunnelUrl) return fail("服务器名称与 Tunnel 地址不能为空");

@@ -3,10 +3,12 @@ import type { PagesFunction } from "@cloudflare/workers-types";
 import type { Env } from "../../lib/db.ts";
 import { ok, fail } from "../../lib/db.ts";
 import { hashPassword } from "../../lib/crypto.ts";
+import { parseJson, requireAdmin } from "../../lib/http.ts";
 
 export const onRequestGet: PagesFunction<Env> = async ({ env, data }) => {
   const user = data.user as { role: string };
-  if (user.role !== "admin") return fail("需要管理员权限", 403);
+  const denied = requireAdmin(user);
+  if (denied) return denied;
   const rows = await env.DB.prepare(
     `SELECT u.id, u.username, u.role, u.quota, u.status, u.subscription_expires_at, u.subscription_status, u.created_at,
             (SELECT COUNT(*) FROM steam_accounts a WHERE a.user_id = u.id) AS account_count
@@ -17,19 +19,16 @@ export const onRequestGet: PagesFunction<Env> = async ({ env, data }) => {
 
 export const onRequestPost: PagesFunction<Env> = async ({ request, env, data }) => {
   const user = data.user as { role: string };
-  if (user.role !== "admin") return fail("需要管理员权限", 403);
+  const denied = requireAdmin(user);
+  if (denied) return denied;
 
-  let body: {
+  const body = await parseJson<{
     user_id?: number;
     action?: "set_quota" | "reset_password" | "disable" | "enable";
     quota?: number;
     new_password?: string;
-  };
-  try {
-    body = (await request.json()) as typeof body;
-  } catch {
-    return fail("请求体必须是 JSON");
-  }
+  }>(request);
+  if (!body) return fail("请求体必须是 JSON");
   const targetId = Number(body.user_id);
   if (!targetId) return fail("缺少 user_id");
   const target = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(targetId).first<{ role: string }>();

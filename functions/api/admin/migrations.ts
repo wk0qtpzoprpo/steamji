@@ -2,10 +2,12 @@
 import type { PagesFunction } from "@cloudflare/workers-types";
 import type { Env } from "../../lib/db.ts";
 import { ok, fail } from "../../lib/db.ts";
+import { requireAdmin } from "../../lib/http.ts";
 
 export const onRequestGet: PagesFunction<Env> = async ({ request, env, data }) => {
   const user = data.user as { role: string };
-  if (user.role !== "admin") return fail("需要管理员权限", 403);
+  const denied = requireAdmin(user);
+  if (denied) return denied;
 
   const url = new URL(request.url);
   const serverId = Number(url.searchParams.get("server_id") || "0");

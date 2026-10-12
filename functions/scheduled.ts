@@ -5,7 +5,7 @@
 //  0 3 * * *    订阅到期标记
 // 若事件不含 cron 字段（兼容兜底），则全量执行（所有任务幂等）
 import type { Env, ServerRow, AccountRow } from "./lib/db.ts";
-import { pingAsf, proxyToAsf } from "./lib/asf.ts";
+import { pingAsf, proxyToAsf, readBotState, callAsfCommand } from "./lib/asf.ts";
 import { decryptData } from "./lib/crypto.ts";
 
 const HOUR = 3600_000;
@@ -244,24 +244,18 @@ export async function runSettlePendingPlays(env: Env) {
     try {
       const server = await env.DB.prepare("SELECT * FROM servers WHERE id = ?").bind(r.server_id).first<ServerRow>();
       if (!server || server.status !== "online") continue;
-      const botResp = await proxyToAsf(env, server, `Api/Bot/${encodeURIComponent(r.bot_name)}`, { method: "GET" });
-      if (!botResp.ok) continue;
-      const j = (await botResp.json().catch(() => null)) as
-        { Result?: Record<string, { IsConnectedAndLoggedOn?: boolean }> } | null;
-      if (!j?.Result?.[r.bot_name]?.IsConnectedAndLoggedOn) continue;
+      const st = await readBotState(env, server, r.bot_name);
+      if (!st?.online) continue;
       let appIds: number[] = [];
       try {
         appIds = JSON.parse(r.app_ids);
       } catch {
         continue;
       }
-      const playResp = await proxyToAsf(env, server, "Api/Command", {
-        method: "POST",
-        body: JSON.stringify({ Command: `play ${r.bot_name} ${appIds.join(",")}` }),
+      const playResp = await callAsfCommand(env, server, "Api/Command", "POST", {
+        Command: `play ${r.bot_name} ${appIds.join(",")}`,
       });
       if (!playResp.ok) continue;
-      const pj = (await playResp.json().catch(() => null)) as { Success?: boolean } | null;
-      if (pj && pj.Success === false) continue;
       await env.DB.prepare(
         "UPDATE play_sessions SET status = 'active' WHERE id = ? AND status = 'pending'"
       ).bind(r.id).run();

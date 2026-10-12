@@ -2,16 +2,13 @@
 import type { PagesFunction } from "@cloudflare/workers-types";
 import type { Env, ServerRow } from "../../lib/db.ts";
 import { ok, fail } from "../../lib/db.ts";
-import { proxyToAsf } from "../../lib/asf.ts";
+import { readBotState, callAsfCommand } from "../../lib/asf.ts";
+import { parseJson } from "../../lib/http.ts";
 
 export const onRequestPost: PagesFunction<Env> = async ({ request, env, data }) => {
   const user = data.user as { id: number; username: string; role: string };
-  let body: { account_id?: number };
-  try {
-    body = (await request.json()) as typeof body;
-  } catch {
-    return fail("请求体必须是 JSON");
-  }
+  const body = await parseJson<{ account_id?: number }>(request);
+  if (!body) return fail("请求体必须是 JSON");
   const accountId = Number(body.account_id || 0);
   if (!accountId) return fail("缺少 account_id");
 
@@ -29,29 +26,11 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, data }) 
 
   // bot 在线时 resume（重启中/离线则跳过，仅结束会话，避免 play 残留）
   if (server.status === "online") {
-    const botResp = await proxyToAsf(env, server, `Api/Bot/${encodeURIComponent(session.bot_name)}`, { method: "GET" });
-    if (botResp.ok) {
-      const j = (await botResp.json().catch(() => null)) as
-        { Result?: Record<string, { IsConnectedAndLoggedOn?: boolean }> } | null;
-      if (j?.Result?.[session.bot_name]?.IsConnectedAndLoggedOn) {
-        const cmdResp = await proxyToAsf(env, server, "Api/Command", {
-          method: "POST",
-          body: JSON.stringify({ Command: `resume ${session.bot_name}` }),
-        });
-        let cmdSuccess = false;
-        let cmdMsg = "";
-        if (cmdResp.ok) {
-          try {
-            const jj = (await cmdResp.json()) as { Success?: boolean; Message?: string };
-            cmdSuccess = jj.Success !== false;
-            cmdMsg = jj.Message ?? "";
-          } catch {
-            cmdSuccess = true;
-          }
-        }
-        if (!cmdSuccess) {
-          return fail(cmdMsg || "ASF 执行 resume 失败，请稍后重试", 502);
-        }
+    const st = await readBotState(env, server, session.bot_name);
+    if (st?.online) {
+      const cmd = await callAsfCommand(env, server, "Api/Command", "POST", { Command: `resume ${session.bot_name}` });
+      if (!cmd.ok) {
+        return fail(cmd.message || "ASF 执行 resume 失败，请稍后重试", 502);
       }
     }
   }

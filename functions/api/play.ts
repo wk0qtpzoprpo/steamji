@@ -3,8 +3,9 @@
 import type { PagesFunction } from "@cloudflare/workers-types";
 import type { Env, ServerRow } from "../lib/db.ts";
 import { ok, fail } from "../lib/db.ts";
-import { proxyToAsf } from "../lib/asf.ts";
-import { decryptData } from "../lib/crypto.ts";
+import { proxyToAsf, readBotState, callAsfCommand, tryConsumeStatusSwitch } from "../lib/asf.ts";
+import { decryptAccountPassword } from "../lib/crypto.ts";
+import { parseJson } from "../lib/http.ts";
 
 interface PlaySessionRow {
   id: number;
@@ -43,28 +44,13 @@ function sessionOut(r: PlaySessionRow) {
   };
 }
 
-// 读取 bot 当前配置的 OnlineStatus（ASF IPC GET /Api/Bot/{bot}）
-async function getBotOnlineStatus(env: Env, server: ServerRow, botName: string): Promise<number | null> {
-  const resp = await proxyToAsf(env, server, `Api/Bot/${encodeURIComponent(botName)}`, { method: "GET" });
-  if (!resp.ok) return null;
-  const j = (await resp.json().catch(() => null)) as { Result?: Record<string, { BotConfig?: { OnlineStatus?: number } }> } | null;
-  const cfg = j?.Result?.[botName]?.BotConfig;
-  return typeof cfg?.OnlineStatus === "number" ? cfg.OnlineStatus : null;
-}
-
 // 向 ASF 发 play 命令（挂指定游戏；带自定义显示名称时好友看到"正在玩 <名称>"）
 async function sendPlay(env: Env, server: ServerRow, botName: string, appIds: number[], displayName?: string | null): Promise<{ ok: boolean; msg: string }> {
   const cmd = displayName
     ? `play ${botName} ${appIds.join(",")} ${displayName}`
     : `play ${botName} ${appIds.join(",")}`;
-  const resp = await proxyToAsf(env, server, "Api/Command", {
-    method: "POST",
-    body: JSON.stringify({ Command: cmd }),
-  });
-  if (!resp.ok) return { ok: false, msg: "ASF 响应异常" };
-  const j = (await resp.json().catch(() => null)) as { Success?: boolean; Message?: string } | null;
-  if (j && j.Success === false) return { ok: false, msg: j.Message ?? "ASF 执行 play 失败" };
-  return { ok: true, msg: j?.Message ?? "" };
+  const r = await callAsfCommand(env, server, "Api/Command", "POST", { Command: cmd });
+  return { ok: r.ok, msg: r.message ?? "" };
 }
 
 // 更新 bot 配置 OnlineStatus 并重启 bot（Stop+Start）
@@ -98,10 +84,8 @@ async function settlePending(env: Env, rows: PlaySessionRow[]): Promise<void> {
     if (r.status !== "pending") continue;
     const server = await env.DB.prepare("SELECT * FROM servers WHERE id = ?").bind(r.server_id).first<ServerRow>();
     if (!server) continue;
-    const resp = await proxyToAsf(env, server, `Api/Bot/${encodeURIComponent(r.bot_name)}`, { method: "GET" });
-    if (!resp.ok) continue;
-    const j = (await resp.json().catch(() => null)) as { Result?: Record<string, { IsConnectedAndLoggedOn?: boolean }> } | null;
-    if (!j?.Result?.[r.bot_name]?.IsConnectedAndLoggedOn) continue;
+    const st = await readBotState(env, server, r.bot_name);
+    if (!st?.online) continue;
     const res = await sendPlay(env, server, r.bot_name, parseAppIds(r.app_ids), r.display_name);
     if (res.ok) {
       await env.DB.prepare("UPDATE play_sessions SET status = 'active' WHERE id = ? AND status = 'pending'")
@@ -136,12 +120,8 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, data }) 
 };
 
 async function handlePost(request: Request, env: Env, user: { id: number; username: string; role: string }): Promise<Response> {
-  let body: { account_id?: number; app_ids?: number[]; online_status?: number; display_name?: string };
-  try {
-    body = (await request.json()) as typeof body;
-  } catch {
-    return fail("请求体必须是 JSON");
-  }
+  const body = await parseJson<{ account_id?: number; app_ids?: number[]; online_status?: number; display_name?: string }>(request);
+  if (!body) return fail("请求体必须是 JSON");
   const accountId = Number(body.account_id || 0);
   if (!accountId) return fail("缺少 account_id");
 
@@ -182,34 +162,22 @@ async function handlePost(request: Request, env: Env, user: { id: number; userna
   if (user.role !== "admin" && server.status !== "online") return fail("服务器当前离线", 503);
 
   // 读取 bot 当前配置的 OnlineStatus
-  const curStatus = await getBotOnlineStatus(env, server, acc.bot_name);
-  if (curStatus === null) return fail("无法读取 bot 当前状态，请检查 ASF", 502);
+  const botState = await readBotState(env, server, acc.bot_name);
+  if (!botState || botState.onlineStatus === undefined) return fail("无法读取 bot 当前状态，请检查 ASF", 502);
+  const curStatus = botState.onlineStatus;
 
   const needSwitch = curStatus !== onlineStatus;
   const now = new Date().toISOString();
 
   if (needSwitch) {
     // 1 小时切换次数限制（最多 3 次）
-    const hourAgo = new Date(Date.now() - 3600_000).toISOString();
-    const cnt = await env.DB.prepare(
-      "SELECT COUNT(*) AS c FROM status_switches WHERE account_id = ? AND switched_at >= ?"
-    ).bind(accountId, hourAgo).first<{ c: number }>();
-    if (!cnt || cnt.c >= 3) {
+    const swc = await tryConsumeStatusSwitch(env, accountId);
+    if (!swc.ok) {
       return fail("1 小时内最多切换 3 次 Steam 状态（切换需重启 bot），请稍后再试", 429);
     }
-    await env.DB.prepare(
-      "INSERT INTO status_switches (account_id, switched_at) VALUES (?, ?)"
-    ).bind(accountId, now).run();
 
     // 解密 Steam 密码（用于重建 BotConfig；扫码登录账号无密码则用空串，ASF 凭 refresh token 自动登录）
-    let password = "";
-    if (acc.password_ct) {
-      try {
-        password = await decryptData({ iv: acc.password_iv, ct: acc.password_ct }, env.ENCRYPT_KEY);
-      } catch {
-        password = "";
-      }
-    }
+    const password = await decryptAccountPassword(acc, env.ENCRYPT_KEY);
 
     // 更新配置 + 重启 bot
     const sw = await switchOnlineStatus(env, server, acc.bot_name, acc.steam_username, password, onlineStatus);
