@@ -7,6 +7,7 @@
 import type { Env, ServerRow, AccountRow } from "./lib/db.ts";
 import { pingAsf, proxyToAsf, readBotState, callAsfCommand } from "./lib/asf.ts";
 import { decryptData } from "./lib/crypto.ts";
+import { parseAppIds } from "./lib/ids.ts";
 
 const HOUR = 3600_000;
 const DAY = 24 * HOUR;
@@ -246,12 +247,8 @@ export async function runSettlePendingPlays(env: Env) {
       if (!server || server.status !== "online") continue;
       const st = await readBotState(env, server, r.bot_name);
       if (!st?.online) continue;
-      let appIds: number[] = [];
-      try {
-        appIds = JSON.parse(r.app_ids);
-      } catch {
-        continue;
-      }
+      const appIds = parseAppIds(r.app_ids);
+      if (appIds.length === 0) continue;
       const playResp = await callAsfCommand(env, server, "Api/Command", "POST", {
         Command: `play ${r.bot_name} ${appIds.join(",")}`,
       });

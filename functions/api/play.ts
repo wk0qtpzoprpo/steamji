@@ -6,6 +6,7 @@ import { ok, fail } from "../lib/db.ts";
 import { proxyToAsf, readBotState, callAsfCommand, tryConsumeStatusSwitch } from "../lib/asf.ts";
 import { decryptAccountPassword } from "../lib/crypto.ts";
 import { parseJson } from "../lib/http.ts";
+import { parseAppIds } from "../lib/ids.ts";
 
 interface PlaySessionRow {
   id: number;
@@ -19,15 +20,6 @@ interface PlaySessionRow {
   started_at: string;
   ended_at: string | null;
   status: string;
-}
-
-function parseAppIds(s: string): number[] {
-  try {
-    const arr = JSON.parse(s);
-    return Array.isArray(arr) ? arr.filter((x): x is number => typeof x === "number") : [];
-  } catch {
-    return [];
-  }
 }
 
 function sessionOut(r: PlaySessionRow) {

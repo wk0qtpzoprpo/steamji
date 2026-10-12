@@ -11,7 +11,8 @@
     "deploy": "wrangler pages deploy",
     "db:create": "wrangler d1 create asf-ipc-console",
     "db:migrate": "wrangler d1 migrations apply asf-ipc-console",
-    "kv:create": "wrangler kv namespace create KV"
+    "kv:create": "wrangler kv namespace create KV",
+    "test": "node --experimental-strip-types --test functions/lib/__tests__/crypto.test.ts functions/lib/__tests__/jwt.test.ts functions/lib/__tests__/ids.test.ts functions/lib/__tests__/sanitize.test.ts"
   },
   "dependencies": {
     "react": "^18.3.1",

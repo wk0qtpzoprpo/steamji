@@ -6,21 +6,7 @@ import { ok, fail } from "../lib/db.ts";
 import { encryptData } from "../lib/crypto.ts";
 import { proxyToAsf } from "../lib/asf.ts";
 import { parseJson } from "../lib/http.ts";
-
-// 普通用户可见的账号字段白名单（隐藏 original_server_id / migration_logs / 密码）
-function sanitizeAccount(row: Record<string, unknown>) {
-  return {
-    id: row.id,
-    bot_name: row.bot_name,
-    steam_username: row.steam_username,
-    status: row.status,
-    server_name: row.server_name ?? null,
-    server_id: row.current_server_id ?? null,
-    expires_at: row.expires_at ?? null,
-    created_at: row.created_at,
-    display_name: row.display_name ?? null,
-  };
-}
+import { sanitizeAccount } from "../lib/sanitize.ts";
 
 export const onRequestGet: PagesFunction<Env> = async ({ env, data }) => {
   const user = data.user as { id: number; username: string; role: string };
