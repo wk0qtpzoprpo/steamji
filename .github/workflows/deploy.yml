@@ -1,0 +1,180 @@
+# ============================================================
+# Steam姬 · 一键全自动部署到 Cloudflare Pages
+# ============================================================
+# 用法：fork 本仓库 → Settings → Secrets and variables → Actions 配置以下 secrets →
+#       Actions 页面点击「Run workflow」→ 等待 ~5 分钟 → 查看运行摘要即可开箱使用。
+#
+# 【必填 secrets】
+#   CLOUDFLARE_ACCOUNT_ID   Cloudflare 账户 ID（Dashboard 右上角我的个人资料可见）
+#   CLOUDFLARE_API_TOKEN    API Token（推荐；需包含 Pages:Edit、D1、KV、Workers Scripts 编辑权限）
+#   或（二选一，用 Global API Key 方式）：
+#   CLOUDFLARE_API_KEY + CLOUDFLARE_EMAIL
+#
+# 【可选 secrets】（不填则自动随机生成，无需配置）
+#   INIT_ADMIN_USERNAME   初始管理员用户名（默认 admin）
+#   INIT_ADMIN_PASSWORD   初始管理员密码（不填则自动生成，部署后在运行摘要中查看）
+#   JWT_SECRET / ENCRYPT_KEY / CRON_TOKEN
+#
+# 工作流自动完成：创建/复用 D1 → 创建/复用 KV → 执行数据库迁移 → 写入 Pages secrets
+# → 构建并部署前端 → 部署 Cron Worker（定时任务）→ 创建初始管理员。
+# 仓库内不含任何账号私密信息，所有资源 ID 由占位符注入，可安全公开分享。
+# ============================================================
+
+name: 一键部署 Steam姬到 Cloudflare Pages
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_API_KEY: ${{ secrets.CLOUDFLARE_API_KEY }}
+      CLOUDFLARE_EMAIL: ${{ secrets.CLOUDFLARE_EMAIL }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: 校验认证并生成密钥
+        run: |
+          set -euo pipefail
+          if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
+            echo "::error::缺少必填 secret：CLOUDFLARE_ACCOUNT_ID"; exit 1
+          fi
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ] && { [ -z "${CLOUDFLARE_API_KEY:-}" ] || [ -z "${CLOUDFLARE_EMAIL:-}" ]; }; then
+            echo "::error::请配置 CLOUDFLARE_API_TOKEN（推荐）或 CLOUDFLARE_API_KEY + CLOUDFLARE_EMAIL"; exit 1
+          fi
+          # 已配置的 secrets 优先，否则自动生成
+          JWT_SECRET="${JWT_SECRET_USER:-$(openssl rand -hex 32)}"
+          ENCRYPT_KEY="${ENCRYPT_KEY_USER:-$(openssl rand -hex 32)}"
+          CRON_TOKEN="${CRON_TOKEN_USER:-$(openssl rand -hex 32)}"
+          ADMIN_USERNAME="${INIT_ADMIN_USERNAME_USER:-admin}"
+          ADMIN_PASSWORD="${INIT_ADMIN_PASSWORD_USER:-$(openssl rand -base64 18 | tr -dc 'A-Za-z0-9' | head -c 16)}"
+          GENERATED_PASS=0
+          [ -z "${INIT_ADMIN_PASSWORD_USER:-}" ] && GENERATED_PASS=1
+          {
+            echo "JWT_SECRET=$JWT_SECRET"
+            echo "ENCRYPT_KEY=$ENCRYPT_KEY"
+            echo "CRON_TOKEN=$CRON_TOKEN"
+            echo "ADMIN_USERNAME=$ADMIN_USERNAME"
+            echo "ADMIN_PASSWORD=$ADMIN_PASSWORD"
+            echo "GENERATED_PASS=$GENERATED_PASS"
+          } >> "$GITHUB_ENV"
+        env:
+          JWT_SECRET_USER: ${{ secrets.JWT_SECRET }}
+          ENCRYPT_KEY_USER: ${{ secrets.ENCRYPT_KEY }}
+          CRON_TOKEN_USER: ${{ secrets.CRON_TOKEN }}
+          INIT_ADMIN_USERNAME_USER: ${{ secrets.INIT_ADMIN_USERNAME }}
+          INIT_ADMIN_PASSWORD_USER: ${{ secrets.INIT_ADMIN_PASSWORD }}
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 创建/复用 D1 数据库
+        run: |
+          set -euo pipefail
+          D1_ID=$(npx wrangler d1 list --json 2>/dev/null | python3 -c \
+            "import sys,json;raw=[l for l in sys.stdin if not l.startswith('Proxy')];d=json.loads(''.join(raw));print(next((x['uuid'] for x in d if x['name']=='asf-ipc-console'),''))" || true)
+          if [ -z "$D1_ID" ]; then
+            echo "D1 不存在，创建中…"
+            D1_ID=$(npx wrangler d1 create asf-ipc-console --json 2>/dev/null | python3 -c \
+              "import sys,json;print(json.load(sys.stdin)['result']['uuid'])")
+          else
+            echo "D1 已存在，复用"
+          fi
+          echo "D1_ID=$D1_ID" >> "$GITHUB_ENV"
+          echo "database_id: $D1_ID"
+
+      - name: 创建/复用 KV Namespace
+        run: |
+          set -euo pipefail
+          # 兼容 API Token 与 Global API Key 两种认证
+          if [ -n "${CLOUDFLARE_API_TOKEN:-}" ]; then
+            HDRS=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN")
+          else
+            HDRS=(-H "X-Auth-Email: $CLOUDFLARE_EMAIL" -H "X-Auth-Key: $CLOUDFLARE_API_KEY")
+          fi
+          KV_API="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/storage/kv/namespaces"
+          KV_ID=$(curl -s "${HDRS[@]}" "$KV_API" | python3 -c \
+            "import sys,json;d=json.load(sys.stdin)['result'];print(next((x['id'] for x in d if x['title'] in ('KV','asf-ipc-console-KV')),''))" || true)
+          if [ -z "$KV_ID" ]; then
+            echo "KV 不存在，创建中…"
+            KV_ID=$(curl -s -X POST "${HDRS[@]}" "$KV_API" -H "Content-Type: application/json" -d '{"title":"KV"}' | python3 -c \
+              "import sys,json;print(json.load(sys.stdin)['result']['id'])")
+          else
+            echo "KV 已存在，复用"
+          fi
+          echo "KV_ID=$KV_ID" >> "$GITHUB_ENV"
+          echo "kv namespace id: $KV_ID"
+
+      - name: 注入资源 ID 到 wrangler.toml
+        run: |
+          set -euo pipefail
+          sed -i "s|D1_DATABASE_ID|$D1_ID|g; s|KV_NAMESPACE_ID|$KV_ID|g" wrangler.toml
+          echo "--- wrangler.toml 注入结果 ---"
+          grep -E "database_id|id =" wrangler.toml
+
+      - name: 执行数据库迁移（migrations 全部应用）
+        run: npx wrangler d1 migrations apply asf-ipc-console --remote
+
+      - name: 构建前端
+        run: npm run build
+
+      - name: 创建 Pages 项目（幂等，已存在则跳过）
+        run: npx wrangler pages project create asf-ipc-console --production-branch main || true
+
+      - name: 写入 Pages secrets
+        run: |
+          set -euo pipefail
+          for s in JWT_SECRET ENCRYPT_KEY CRON_TOKEN INIT_ADMIN_USERNAME INIT_ADMIN_PASSWORD; do
+            echo "${!s}" | npx wrangler pages secret put "$s" --project-name asf-ipc-console
+          done
+          echo "5 个 Pages secrets 已写入"
+
+      - name: 部署到 Cloudflare Pages（production）
+        run: npx wrangler pages deploy dist --project-name asf-ipc-console --branch main
+
+      - name: 部署 Cron Worker（定时任务：健康检查/故障转移/校准/到期标记）
+        run: |
+          set -euo pipefail
+          echo "$CRON_TOKEN" | npx wrangler secret put CRON_TOKEN --config worker-cron/wrangler.toml
+          npx wrangler deploy --config worker-cron/wrangler.toml
+          echo "Cron Worker 已部署"
+
+      - name: 创建初始管理员
+        run: |
+          sleep 20   # 等待 Pages 部署生效
+          BODY=$(python3 -c "import json,sys;print(json.dumps({'username':sys.argv[1],'password':sys.argv[2]}))" "$ADMIN_USERNAME" "$ADMIN_PASSWORD")
+          RESP=$(curl -s -X POST "https://asf-ipc-console.pages.dev/api/auth/register" \
+            -H 'Content-Type: application/json' -d "$BODY" || true)
+          echo "register 响应: $RESP"
+
+      - name: 输出部署摘要
+        run: |
+          {
+            echo "## 🎉 Steam姬 部署完成"
+            echo ""
+            echo "- 🌐 控制台：https://asf-ipc-console.pages.dev"
+            echo "- 👤 管理员账号：\`$ADMIN_USERNAME\`"
+            if [ "$GENERATED_PASS" = "1" ]; then
+              echo "- 🔑 管理员密码（自动生成）：\`$ADMIN_PASSWORD\`"
+              echo ""
+              echo "> ⚠️ **公开仓库注意**：本运行摘要公开可见。部署后请立即登录并修改密码，或删除本次运行记录。"
+            else
+              echo "- 🔑 管理员密码：来自 INIT_ADMIN_PASSWORD secret"
+            fi
+            echo ""
+            echo "### 下一步"
+            echo "1. 登录后台 → 服务器管理 → 添加你的 ASF 服务器（Tunnel 地址 + IPCPassword）"
+            echo "2. 生成卡密、发布公告、设置购买渠道"
+            echo "3. 用户注册使用"
+          } >> "$GITHUB_STEP_SUMMARY"

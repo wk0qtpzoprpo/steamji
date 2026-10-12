@@ -1,0 +1,15 @@
+# 依赖与构建产物
+node_modules/
+dist/
+.wrangler/
+_worker.bundle/
+
+# 本地敏感文件（绝不入库）
+.dev.vars
+.secrets*
+*.local.env
+
+# 日志与系统文件
+*.log
+.DS_Store
+backup-d1-before-cleanup-1.3.0.sql

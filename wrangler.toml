@@ -1,0 +1,30 @@
+name = "asf-ipc-console"
+compatibility_date = "2026-01-01"
+pages_build_output_dir = "dist"
+
+# 注：Pages 的 Cron Triggers 不支持 wrangler.toml 配置，
+# 需在 Cloudflare Dashboard → 项目 → Settings → Cron Triggers 添加：
+#   */5 * * * *  健康检查（探测全部服务器，维护在线状态，触发回迁禁用）
+#   0 * * * *    故障转移（迁移离线≥24h 服务器上的账号）+ bot_count 校准
+#   0 3 * * *    订阅到期标记（仅禁登录，bot 保留）
+
+# ============ D1 数据库 ============
+# 占位符由 GitHub Actions 一键部署工作流自动注入（自动创建/复用 D1 并回填 ID）。
+# 本地手动部署时：npx wrangler d1 create asf-ipc-console 后用返回的 database_id 替换下方占位符。
+[[d1_databases]]
+binding = "DB"
+database_name = "asf-ipc-console"
+database_id = "D1_DATABASE_ID"
+
+# ============ KV Namespace ============
+# 占位符由 GitHub Actions 一键部署工作流自动注入（自动创建/复用 KV 并回填 ID）。
+# 本地手动部署时：npx wrangler kv namespace create KV 后用返回的 id 替换下方占位符。
+[[kv_namespaces]]
+binding = "KV"
+id = "KV_NAMESPACE_ID"
+
+# ============ 环境变量（敏感项请用 secrets 设置） ============
+# npx wrangler pages secret put JWT_SECRET
+# npx wrangler pages secret put ENCRYPT_KEY
+# npx wrangler pages secret put INIT_ADMIN_USERNAME
+# npx wrangler pages secret put INIT_ADMIN_PASSWORD

@@ -1,0 +1,16 @@
+name = "asf-ipc-cron"
+main = "./src/index.ts"
+compatibility_date = "2026-01-01"
+
+# ============ Cron Triggers（Workers 支持） ============
+# */5 * * * *  健康检查 + 账号状态同步
+# 0 * * * *    故障转移 + bot_count 校准
+# 0 3 * * *    订阅到期标记
+[triggers]
+crons = ["*/5 * * * *", "0 * * * *", "0 3 * * *"]
+
+# ============ 环境变量 ============
+# PAGES_URL：Pages 项目域名（含 https://）
+# CRON_TOKEN：与 Pages 项目 secret CRON_TOKEN 一致（用 secret 设置，勿放 vars）
+[vars]
+PAGES_URL = "https://asf-ipc-console.pages.dev"
