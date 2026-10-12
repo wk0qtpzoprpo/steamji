@@ -29,6 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
+      PROJECT_NAME: asf-ipc-console
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_API_KEY: ${{ secrets.CLOUDFLARE_API_KEY }}
       CLOUDFLARE_EMAIL: ${{ secrets.CLOUDFLARE_EMAIL }}
@@ -149,6 +150,8 @@ jobs:
       - name: 部署 Cron Worker（定时任务：健康检查/故障转移/校准/到期标记）
         run: |
           set -euo pipefail
+          # 注入部署目标域名（PAGES_URL 占位符 → 实际域名）
+          sed -i "s|PAGES_URL_PLACEHOLDER|https://$PROJECT_NAME.pages.dev|g" worker-cron/wrangler.toml
           echo "$CRON_TOKEN" | npx wrangler secret put CRON_TOKEN --config worker-cron/wrangler.toml
           npx wrangler deploy --config worker-cron/wrangler.toml
           echo "Cron Worker 已部署"
@@ -157,7 +160,7 @@ jobs:
         run: |
           sleep 20   # 等待 Pages 部署生效
           BODY=$(python3 -c "import json,sys;print(json.dumps({'username':sys.argv[1],'password':sys.argv[2]}))" "$ADMIN_USERNAME" "$ADMIN_PASSWORD")
-          RESP=$(curl -s -X POST "https://asf-ipc-console.pages.dev/api/auth/register" \
+          RESP=$(curl -s -X POST "https://$PROJECT_NAME.pages.dev/api/auth/register" \
             -H 'Content-Type: application/json' -d "$BODY" || true)
           echo "register 响应: $RESP"
 
@@ -166,7 +169,7 @@ jobs:
           {
             echo "## 🎉 Steam姬 部署完成"
             echo ""
-            echo "- 🌐 控制台：https://asf-ipc-console.pages.dev"
+            echo "- 🌐 控制台：https://$PROJECT_NAME.pages.dev"
             echo "- 👤 管理员账号：\`$ADMIN_USERNAME\`"
             if [ "$GENERATED_PASS" = "1" ]; then
               echo "- 🔑 管理员密码（自动生成）：\`$ADMIN_PASSWORD\`"

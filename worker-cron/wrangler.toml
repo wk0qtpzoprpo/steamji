@@ -11,6 +11,8 @@ crons = ["*/5 * * * *", "0 * * * *", "0 3 * * *"]
 
 # ============ 环境变量 ============
 # PAGES_URL：Pages 项目域名（含 https://）
+# 占位符 PAGES_URL_PLACEHOLDER 由 GitHub Actions 一键部署工作流在部署时自动替换为实际域名；
+# 本地手动部署时请自行替换为 https://<你的 Pages 项目名>.pages.dev
 # CRON_TOKEN：与 Pages 项目 secret CRON_TOKEN 一致（用 secret 设置，勿放 vars）
 [vars]
-PAGES_URL = "https://asf-ipc-console.pages.dev"
+PAGES_URL = "PAGES_URL_PLACEHOLDER"

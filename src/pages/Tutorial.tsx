@@ -1,4 +1,4 @@
-// 教程页：参照 g.77key 首页「特性 + FAQ」结构，结合本程序实际功能
+// 教程页：参照「特性 + FAQ」结构，结合本程序实际功能
 import { useState } from "react";
 
 const FAQS: { q: string; a: React.ReactNode }[] = [
