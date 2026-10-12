@@ -265,13 +265,13 @@ cloudflared service install
 | v1.1.5 | 回退扫码登录（Steam 二维码仅对启用手机令牌账号有效），新增自定义「正在玩」名称 |
 | v1.1.6 | 存档版 |
 | v1.2.0 | **槽位化**：卡密按槽位续费（删账号后新账号继承时长） |
-| v1.3.0 | 教程页 + 公告系统 + GitHub Actions 仅手动部署 + **品牌改名 Steam姬**（图标 / favicon / 仓库 steam-ji） |
+| v1.3.0 | 教程页 + 公告系统 + GitHub Actions 仅手动部署 + **品牌改名 Steam姬**（图标 / favicon / 仓库 steamji） |
 
 每个版本均打 Git Tag + GitHub Release，并提供本地 `tar.gz` 备份（含 `.secrets.env`），可随时回退。
 
 ## 相关链接
 
-- GitHub 仓库：`steam-ji`（fork 后为你的 `你的用户名/steam-ji`）
+- GitHub 仓库：`steamji`（fork 后为你的 `你的用户名/steamji`）
 - 线上控制台：`https://asf-ipc-console.pages.dev`（一键部署后即为你的部署地址）
 - 教程页：`https://asf-ipc-console.pages.dev/tutorial`
 - APPID 查询：[steamui.com](https://steamui.com)
