@@ -159,8 +159,8 @@ npx wrangler deploy --config worker-cron/wrangler.toml
 | Secret | 说明 |
 |---|---|
 | `CLOUDFLARE_ACCOUNT_ID` | **必填**。Cloudflare 账户 ID |
-| `CLOUDFLARE_API_TOKEN` | **推荐**。API Token（需 Pages:Edit、D1、KV、Workers Scripts 编辑权限） |
-| `CLOUDFLARE_API_KEY` + `CLOUDFLARE_EMAIL` | 二选一。Global API Key 方式 |
+| `CLOUDFLARE_API_KEY` | **必填**。Global API Key（Dashboard → 我的个人资料 → API 令牌） |
+| `CLOUDFLARE_EMAIL` | **必填**。账户邮箱 |
 | `INIT_ADMIN_USERNAME` | 可选。初始管理员用户名（默认 `admin`） |
 | `INIT_ADMIN_PASSWORD` | 可选。初始管理员密码（**不填则自动生成**，部署后在运行摘要查看，请立即登录修改） |
 | `JWT_SECRET` / `ENCRYPT_KEY` / `CRON_TOKEN` | 可选。不填自动随机生成 |
@@ -265,13 +265,13 @@ cloudflared service install
 | v1.1.5 | 回退扫码登录（Steam 二维码仅对启用手机令牌账号有效），新增自定义「正在玩」名称 |
 | v1.1.6 | 存档版 |
 | v1.2.0 | **槽位化**：卡密按槽位续费（删账号后新账号继承时长） |
-| v1.3.0 | 教程页 + 公告系统 + GitHub Actions 仅手动部署 + **品牌改名 Steam姬**（图标 / favicon / 仓库 steamji） |
+| v1.3.0 | 教程页 + 公告系统 + GitHub Actions 仅手动部署 + **品牌改名 Steam姬**（图标 / favicon / 仓库 steam-ji） |
 
 每个版本均打 Git Tag + GitHub Release，并提供本地 `tar.gz` 备份（含 `.secrets.env`），可随时回退。
 
 ## 相关链接
 
-- GitHub 仓库：`steamji`（fork 后为你的 `你的用户名/steamji`）
+- GitHub 仓库：`steam-ji`（fork 后为你的 `你的用户名/steam-ji`）
 - 线上控制台：`https://asf-ipc-console.pages.dev`（一键部署后即为你的部署地址）
 - 教程页：`https://asf-ipc-console.pages.dev/tutorial`
 - APPID 查询：[steamui.com](https://steamui.com)

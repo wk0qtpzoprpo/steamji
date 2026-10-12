@@ -4,11 +4,10 @@
 # 用法：fork 本仓库 → Settings → Secrets and variables → Actions 配置以下 secrets →
 #       Actions 页面点击「Run workflow」→ 等待 ~5 分钟 → 查看运行摘要即可开箱使用。
 #
-# 【必填 secrets】
+# 【必填 secrets】（必须且只需以下 3 个，无需 API Token）
 #   CLOUDFLARE_ACCOUNT_ID   Cloudflare 账户 ID（Dashboard 右上角我的个人资料可见）
-#   CLOUDFLARE_API_TOKEN    API Token（推荐；需包含 Pages:Edit、D1、KV、Workers Scripts 编辑权限）
-#   或（二选一，用 Global API Key 方式）：
-#   CLOUDFLARE_API_KEY + CLOUDFLARE_EMAIL
+#   CLOUDFLARE_API_KEY      Cloudflare Global API Key
+#   CLOUDFLARE_EMAIL        账户邮箱
 #
 # 【可选 secrets】（不填则自动随机生成，无需配置）
 #   INIT_ADMIN_USERNAME   初始管理员用户名（默认 admin）
@@ -31,7 +30,6 @@ jobs:
     timeout-minutes: 20
     env:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_API_KEY: ${{ secrets.CLOUDFLARE_API_KEY }}
       CLOUDFLARE_EMAIL: ${{ secrets.CLOUDFLARE_EMAIL }}
     steps:
@@ -50,8 +48,8 @@ jobs:
           if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
             echo "::error::缺少必填 secret：CLOUDFLARE_ACCOUNT_ID"; exit 1
           fi
-          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ] && { [ -z "${CLOUDFLARE_API_KEY:-}" ] || [ -z "${CLOUDFLARE_EMAIL:-}" ]; }; then
-            echo "::error::请配置 CLOUDFLARE_API_TOKEN（推荐）或 CLOUDFLARE_API_KEY + CLOUDFLARE_EMAIL"; exit 1
+          if [ -z "${CLOUDFLARE_API_KEY:-}" ] || [ -z "${CLOUDFLARE_EMAIL:-}" ]; then
+            echo "::error::缺少必填 secret：CLOUDFLARE_API_KEY 或 CLOUDFLARE_EMAIL"; exit 1
           fi
           # 已配置的 secrets 优先，否则自动生成
           JWT_SECRET="${JWT_SECRET_USER:-$(openssl rand -hex 32)}"
@@ -97,12 +95,8 @@ jobs:
       - name: 创建/复用 KV Namespace
         run: |
           set -euo pipefail
-          # 兼容 API Token 与 Global API Key 两种认证
-          if [ -n "${CLOUDFLARE_API_TOKEN:-}" ]; then
-            HDRS=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN")
-          else
-            HDRS=(-H "X-Auth-Email: $CLOUDFLARE_EMAIL" -H "X-Auth-Key: $CLOUDFLARE_API_KEY")
-          fi
+          # Global API Key 认证（X-Auth-Email + X-Auth-Key）
+          HDRS=(-H "X-Auth-Email: $CLOUDFLARE_EMAIL" -H "X-Auth-Key: $CLOUDFLARE_API_KEY")
           KV_API="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/storage/kv/namespaces"
           KV_ID=$(curl -s "${HDRS[@]}" "$KV_API" | python3 -c \
             "import sys,json;d=json.load(sys.stdin)['result'];print(next((x['id'] for x in d if x['title'] in ('KV','asf-ipc-console-KV')),''))" || true)
