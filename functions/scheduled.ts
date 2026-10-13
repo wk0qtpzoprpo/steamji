@@ -157,10 +157,22 @@ async function restoreMissingBot(env: Env, server: ServerRow, acc: AccountRow): 
     "SELECT id FROM play_sessions WHERE account_id = ? AND status = 'pending' LIMIT 1"
   ).bind(acc.id).first<{ id: number }>();
   if (hasPlay) {
-    try {
-      await proxyToAsf(env, server, `Api/Bot/${encodeURIComponent(acc.bot_name)}/Start`, { method: "POST" });
-    } catch {
-      // 启动失败由用户手动重试
+    // 无可用时间/已到期不自动 Start（与 stopExpiredBots 语义一致，避免短暂拉起无时长 bot）
+    const slotRow = await env.DB.prepare(
+      `SELECT s.expires_at FROM account_slots s JOIN steam_accounts a ON a.slot_id = s.id WHERE a.id = ?`
+    ).bind(acc.id).first<{ expires_at: string | null }>();
+    const noTime = !slotRow?.expires_at || new Date(slotRow.expires_at).getTime() < Date.now();
+    if (noTime) {
+      // 到期仅禁登录：终止挂时长会话并保持 bot 停止
+      await env.DB.prepare(
+        "UPDATE play_sessions SET status = 'ended', ended_at = ? WHERE account_id = ? AND status IN ('pending','active')"
+      ).bind(new Date().toISOString(), acc.id).run();
+    } else {
+      try {
+        await proxyToAsf(env, server, `Api/Bot/${encodeURIComponent(acc.bot_name)}/Start`, { method: "POST" });
+      } catch {
+        // 启动失败由用户手动重试
+      }
     }
   }
 }
