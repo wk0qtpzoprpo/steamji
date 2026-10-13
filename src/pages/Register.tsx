@@ -39,7 +39,7 @@ export default function Register() {
           <input value={username} onChange={(e) => setUsername(e.target.value)} autoFocus />
           <label>密码</label>
           <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-          <div className="hint">免费注册，无需邀请码。注册后账户额度为 0，可在「兑换卡密」中增加</div>
+          <div className="hint">免费注册，无需邀请码。注册后默认可添加 2 个账号，初始状态为「无可用时间」，可在「兑换卡密」中增加</div>
           {error && <div className="err">{error}</div>}
           <button className="btn" disabled={loading} style={{ width: "100%" }}>
             {loading ? "注册中…" : "注册"}
