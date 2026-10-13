@@ -117,6 +117,10 @@ export const onRequestDelete: PagesFunction<Env, Params> = async ({ env, data, p
   for (const sid of cleanIds) {
     const server = await env.DB.prepare("SELECT * FROM servers WHERE id = ?").bind(sid).first<ServerRow>();
     if (server && server.status === "online") {
+      // ASF 对运行中（Enabled=true）的 bot 直接 DELETE 会残留：先禁用再删除
+      await callAsfCommand(env, server, `Api/Bot/${encodeURIComponent(account.bot_name)}`, "POST", {
+        BotConfig: { Enabled: false },
+      });
       await callAsfCommand(env, server, `Api/Bot/${encodeURIComponent(account.bot_name)}`, "DELETE");
     }
   }
