@@ -86,6 +86,14 @@ async function disableMigratedCopies(env: Env, server: ServerRow) {
   }
 }
 
+// 挂时长会话优先取在线状态与显示名称（重建/迁移时恢复"正在游戏中"）
+async function getPlayState(env: Env, accountId: number): Promise<{ online_status: number; display_name: string | null }> {
+  const s = await env.DB.prepare(
+    "SELECT online_status, display_name FROM play_sessions WHERE account_id = ? AND status IN ('pending','active') ORDER BY id DESC LIMIT 1"
+  ).bind(accountId).first<{ online_status: number; display_name: string | null }>();
+  return { online_status: s?.online_status ?? 0, display_name: s?.display_name ?? null };
+}
+
 // 服务器在线但 ASF 侧 bot 缺失（如 Render 无持久化磁盘重启丢数据）→ 按 D1 凭据自动重建
 // 仅在账号正常归属（migration_status=active）时重建；已迁走/已禁用的副本不重建，避免双端在线
 async function restoreMissingBot(env: Env, server: ServerRow, acc: AccountRow): Promise<void> {
@@ -97,6 +105,7 @@ async function restoreMissingBot(env: Env, server: ServerRow, acc: AccountRow): 
     await logMigration(env, acc.id, server.id, server.id, "restore_failed", "密码解密失败，需人工处理");
     return;
   }
+  const play = await getPlayState(env, acc.id);
   let ok_ = false;
   try {
     const resp = await proxyToAsf(env, server, `Api/Bot/${encodeURIComponent(acc.bot_name)}`, {
@@ -106,8 +115,8 @@ async function restoreMissingBot(env: Env, server: ServerRow, acc: AccountRow): 
           Enabled: true,
           SteamLogin: acc.steam_username,
           SteamPassword: password,
-          OnlineStatus: acc.online_status ?? 0,
-          CustomGamePlayedWhileFarming: acc.display_name || null,
+          OnlineStatus: play.online_status,
+          CustomGamePlayedWhileFarming: play.display_name || acc.display_name || null,
           // 禁止自动挂卡：挂卡必须由用户手动发起（经"无可用时间"校验）
           AutoStart: false,
         },
@@ -165,6 +174,7 @@ export async function runMigration(env: Env) {
         continue;
       }
 
+      const play = await getPlayState(env, acc.id);
       let success = false;
       try {
         const resp = await proxyToAsf(env, target, `Api/Bot/${encodeURIComponent(acc.bot_name)}`, {
@@ -174,8 +184,8 @@ export async function runMigration(env: Env) {
               Enabled: true,
               SteamLogin: acc.steam_username,
               SteamPassword: password,
-              OnlineStatus: acc.online_status ?? 0,
-              CustomGamePlayedWhileFarming: acc.display_name || null,
+              OnlineStatus: play.online_status,
+              CustomGamePlayedWhileFarming: play.display_name || acc.display_name || null,
               AutoStart: false,
             },
           }),
@@ -239,11 +249,8 @@ export async function syncAccountStatus(env: Env) {
     if (!botMap) continue; // 查询失败（服务器刚掉线）则本轮跳过
 
     const accounts = await env.DB.prepare(
-      "SELECT id, bot_name, steam_username, password_iv, password_ct, migration_status, online_status, display_name FROM steam_accounts WHERE current_server_id = ?"
-    ).bind(server.id).all<{
-      id: number; bot_name: string; steam_username: string; password_iv: string; password_ct: string;
-      migration_status: string; online_status?: number; display_name?: string | null;
-    }>();
+      "SELECT * FROM steam_accounts WHERE current_server_id = ?"
+    ).bind(server.id).all<AccountRow>();
 
     for (const acc of accounts.results) {
       const bot = botMap[acc.bot_name];
