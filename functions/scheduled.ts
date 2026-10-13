@@ -338,7 +338,8 @@ export async function runSettlePendingPlays(env: Env) {
       const server = await env.DB.prepare("SELECT * FROM servers WHERE id = ?").bind(r.server_id).first<ServerRow>();
       if (!server || server.status !== "online") continue;
       const st = await readBotState(env, server, r.bot_name);
-      if (st?.requiredInput === 8) {
+      if (!st) continue;
+      if (st.requiredInput === 8) {
         // ASF 询问二维码登录 → 自动拒绝，走密码登录（凭据存于 D1）
         try {
           await proxyToAsf(env, server, `Api/Bot/${encodeURIComponent(r.bot_name)}/Input`, {
@@ -350,7 +351,16 @@ export async function runSettlePendingPlays(env: Env) {
         }
         continue;
       }
-      if (!st?.online) continue;
+      if (!st.online) {
+        // 未登录且无待处理输入（拒绝二维码后 bot 中止）→ 重新 Start，走密码登录；
+        // 收敛路径：Start → 问二维码 → N → Start → 密码登录（实测）
+        try {
+          await proxyToAsf(env, server, `Api/Bot/${encodeURIComponent(r.bot_name)}/Start`, { method: "POST" });
+        } catch {
+          // 忽略，下轮重试
+        }
+        continue;
+      }
       const appIds = parseAppIds(r.app_ids);
       if (appIds.length === 0) continue;
       const playResp = await callAsfCommand(env, server, "Api/Command", "POST", {
@@ -381,6 +391,7 @@ export const onScheduled = async (event: unknown, env: Env) => {
     if (!cron || cron === "*/10 * * * *") {
       await runHealthCheck(env);
       await syncAccountStatus(env);
+      await runSettlePendingPlays(env);
     }
     if (!cron || cron === "0 * * * *") {
       await runMigration(env);

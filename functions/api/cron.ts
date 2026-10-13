@@ -21,6 +21,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   if (!cron || cron === "*/10 * * * *") {
     await runHealthCheck(env);
     await syncAccountStatus(env);
+    await runSettlePendingPlays(env);
     await stopExpiredBots(env);
   }
   if (!cron || cron === "0 * * * *") {
