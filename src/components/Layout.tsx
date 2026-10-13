@@ -34,7 +34,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     <div>
       {/* 顶部导航（桌面）/ 顶栏（移动） */}
       <nav className="nav">
-        <span className="brand">Steam姬</span>
+        <span className="brand"><img src="/steamji-logo.png" alt="" className="brand-icon" />Steam姬</span>
         <div className="nav-links">
           {links.map((l) => (
             <Link key={l.to} to={l.to} className={loc.pathname.startsWith(l.to) ? "active" : ""}>
@@ -54,7 +54,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       <div className={`drawer-mask ${menuOpen ? "open" : ""}`} onClick={close}>
         <aside className="drawer" onClick={(e) => e.stopPropagation()}>
           <div className="drawer-head">
-            <span className="brand">Steam姬</span>
+            <span className="brand"><img src="/steamji-logo.png" alt="" className="brand-icon" />Steam姬</span>
             <button className="drawer-close" aria-label="关闭菜单" onClick={close}>✕</button>
           </div>
           <nav className="drawer-nav">
