@@ -304,6 +304,10 @@ export async function stopExpiredBots(env: Env) {
     if (!noTime) continue;
     const server = await env.DB.prepare("SELECT * FROM servers WHERE id = ?").bind(acc.current_server_id).first<ServerRow>();
     if (!server) continue;
+    // B：先终止该账号的挂时长会话（status→ended），从源头消除 runSettlePendingPlays 的竞争源
+    await env.DB.prepare(
+      "UPDATE play_sessions SET status = 'ended', ended_at = ? WHERE account_id = ? AND status IN ('pending','active')"
+    ).bind(new Date(now).toISOString(), acc.id).run();
     try {
       const resp = await proxyToAsf(env, server, `Api/Bot/${encodeURIComponent(acc.bot_name)}/Stop`, {
         method: "POST",
@@ -332,9 +336,22 @@ export async function runCalibration(env: Env) {
 export async function runSettlePendingPlays(env: Env) {
   const rows = await env.DB.prepare(
     "SELECT * FROM play_sessions WHERE status IN ('pending','active')"
-  ).all<{ id: number; bot_name: string; server_id: number; app_ids: string; display_name: string | null }>();
+  ).all<{ id: number; account_id: number; bot_name: string; server_id: number; app_ids: string; display_name: string | null }>();
   for (const r of rows.results) {
     try {
+      // A：先查账号绑定的栏位时长，无可用时间/已到期则终止会话并跳过（与 stopExpiredBots 语义一致，避免 Start/Stop 竞争）
+      const accRow = await env.DB.prepare(
+        `SELECT a.id, s.expires_at FROM steam_accounts a
+         LEFT JOIN account_slots s ON a.slot_id = s.id WHERE a.id = ?`
+      ).bind(r.account_id).first<{ id: number; expires_at: string | null }>();
+      if (!accRow) continue;
+      const noTime = !accRow.expires_at || new Date(accRow.expires_at).getTime() < Date.now();
+      if (noTime) {
+        await env.DB.prepare(
+          "UPDATE play_sessions SET status = 'ended', ended_at = ? WHERE id = ? AND status IN ('pending','active')"
+        ).bind(new Date().toISOString(), r.id).run();
+        continue;
+      }
       const server = await env.DB.prepare("SELECT * FROM servers WHERE id = ?").bind(r.server_id).first<ServerRow>();
       if (!server || server.status !== "online") continue;
       const st = await readBotState(env, server, r.bot_name);
