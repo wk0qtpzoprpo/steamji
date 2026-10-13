@@ -108,12 +108,17 @@ export const onRequestDelete: PagesFunction<Env, Params> = async ({ env, data, p
   const account = await getOwnedAccount(env, user.id, Number(params.id));
   if (!account) return fail("账号不存在", 404);
 
-  // 尽力删除 ASF bot（服务器离线则跳过，不影响删除本地记录）
-  const server = account.current_server_id
-    ? await env.DB.prepare("SELECT * FROM servers WHERE id = ?").bind(account.current_server_id).first<ServerRow>()
-    : null;
-  if (server && server.status === "online") {
-    await callAsfCommand(env, server, `Api/Bot/${encodeURIComponent(account.bot_name)}`, "DELETE");
+  // 尽力删除 ASF bot（当前服务器 + 迁移源服务器副本；服务器离线则跳过，不影响删除本地记录）
+  const cleanIds = new Set<number>();
+  if (account.current_server_id) cleanIds.add(account.current_server_id);
+  if (account.original_server_id && account.original_server_id !== account.current_server_id) {
+    cleanIds.add(account.original_server_id);
+  }
+  for (const sid of cleanIds) {
+    const server = await env.DB.prepare("SELECT * FROM servers WHERE id = ?").bind(sid).first<ServerRow>();
+    if (server && server.status === "online") {
+      await callAsfCommand(env, server, `Api/Bot/${encodeURIComponent(account.bot_name)}`, "DELETE");
+    }
   }
 
   await env.DB.prepare("DELETE FROM steam_accounts WHERE id = ?").bind(account.id).run();
