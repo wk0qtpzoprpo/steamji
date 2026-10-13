@@ -39,9 +39,10 @@ export const onRequestPut: PagesFunction<Env, Params> = async ({ request, env, d
     const r = await callAsfCommand(env, server!, `Api/Bot/${encodeURIComponent(account.bot_name)}/Rename`, "POST", { NewName: newName });
     if (!r.ok) return fail(r.message || "重命名失败", 502);
     await env.DB.prepare("UPDATE steam_accounts SET bot_name = ? WHERE id = ?").bind(newName, account.id).run();
-    // 同步挂时长/挂卡会话的 bot 名，否则 settle 用旧名查 ASF 导致挂时长断链
-    await env.DB.prepare("UPDATE play_sessions SET bot_name = ? WHERE account_id = ? AND bot_name = ?")
-      .bind(newName, account.id, account.bot_name).run();
+    // 同步挂时长/挂卡会话的 bot 名（按账户全量更新，覆盖多代旧名），
+    // 否则 settle 用旧名查 ASF 导致挂时长断链
+    await env.DB.prepare("UPDATE play_sessions SET bot_name = ? WHERE account_id = ?")
+      .bind(newName, account.id).run();
     return ok({ bot_name: newName }, "已重命名");
   }
 
