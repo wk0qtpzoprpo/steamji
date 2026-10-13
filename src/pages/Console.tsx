@@ -105,6 +105,7 @@ export default function Console() {
             acc={acc}
             farmingId={farm.farming?.id ?? null}
             lastDoneBot={farm.lastDoneBot}
+            loginState={farm.pendingLogin ? { botName: farm.pendingLogin.acc.bot_name, status: farm.pendingLogin.status } : null}
             onStart={() => farm.startFarming(acc)}
             onRename={() => void renameAccount(acc)}
             onEdit={() => void editAccount(acc)}
