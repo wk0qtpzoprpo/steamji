@@ -239,8 +239,11 @@ export async function syncAccountStatus(env: Env) {
     if (!botMap) continue; // 查询失败（服务器刚掉线）则本轮跳过
 
     const accounts = await env.DB.prepare(
-      "SELECT id, bot_name FROM steam_accounts WHERE current_server_id = ?"
-    ).bind(server.id).all<{ id: number; bot_name: string }>();
+      "SELECT id, bot_name, steam_username, password_iv, password_ct, migration_status, online_status, display_name FROM steam_accounts WHERE current_server_id = ?"
+    ).bind(server.id).all<{
+      id: number; bot_name: string; steam_username: string; password_iv: string; password_ct: string;
+      migration_status: string; online_status?: number; display_name?: string | null;
+    }>();
 
     for (const acc of accounts.results) {
       const bot = botMap[acc.bot_name];
