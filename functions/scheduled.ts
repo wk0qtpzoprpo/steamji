@@ -52,7 +52,7 @@ export async function runHealthCheck(env: Env) {
 // 回迁禁用：原服务器恢复上线后，禁用该服务器上已被迁移走的账号副本（避免同一 Steam 账号双端在线）
 async function disableMigratedCopies(env: Env, server: ServerRow) {
   const accounts = await env.DB.prepare(
-    "SELECT * FROM steam_accounts WHERE original_server_id = ? AND migration_status = 'migrated'"
+    "SELECT * FROM steam_accounts WHERE original_server_id = ? AND migration_status IN ('migrated','disabled')"
   ).bind(server.id).all<AccountRow>();
   for (const acc of accounts.results) {
     let ok_ = false;
