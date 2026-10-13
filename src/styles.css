@@ -184,6 +184,18 @@ a:hover { text-decoration: underline; }
   margin-top: 12px;
   font-size: 13px;
 }
+.ok-submit {
+  font-size: 14px;
+  font-weight: 600;
+  text-align: center;
+  padding: 14px 16px;
+  margin-top: 16px;
+  animation: submit-pop 0.35s ease;
+}
+@keyframes submit-pop {
+  from { opacity: 0; transform: translateY(4px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
 
 /* ---------- 顶部导航（桌面）/ 移动侧边抽屉 ---------- */
 .nav {
