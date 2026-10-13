@@ -4,8 +4,9 @@
 // 登录分两条路径：
 // 1. 密码登录（无需令牌）：弹窗内轮询，60 秒超时 → "登录失败，请检查账号密码"
 // 2. 令牌登录：输入令牌 → 弹窗显示"提交成功" → 回桌面 → 卡片显示"正在登录，请稍后"，
-//    后台轮询；提交 60 秒后自动重发一次开始挂卡命令（等效用户点击开始挂卡），
-//    5 分钟内成功 → 卡片绿；仍未成功 → 卡片"令牌错误，请检查"
+//    后台轮询；每次提交令牌后 60 秒自动重发一次开始挂卡命令（等效用户点击开始挂卡），
+//    每次自动重发计一次失败（attempts+1）；ASF 要求令牌时自动重弹输入框让用户继续输入；
+//    第 3 次输入后 60 秒 ASF 仍未反馈登录成功 → 中止，提示检查账号密码后回到点挂卡前状态。
 import { useEffect, useState } from "react";
 import { apiRaw } from "../lib/api";
 import type { Account } from "../pages/account-detail/types";
@@ -19,30 +20,32 @@ export type FarmStage = "starting" | "polling" | "input" | "done" | "failed";
 // 持久化到 localStorage，刷新/离开页面后仍能恢复显示并继续轮询
 export interface PendingLogin {
   acc: Pick<Account, "bot_name" | "server_id">;
-  deadline: number;
-  status: "pending" | "failed" | "done";
+  deadline: number; // = 提交令牌时刻 + 60 秒（自动重发与第 3 轮结论的时刻）
+  attempts: number; // 已发生的自动重发次数（每次自动重发 +1，达到 3 中止）
+  status: "pending" | "done";
 }
 
 const LS_KEY = "steamji_pending_login";
 
-// 令牌提交后等待登录成功的最长时间（5 分钟）
-export const TOKEN_LOGIN_TIMEOUT = 300_000;
-// 提交 60 秒后自动重发一次开始挂卡命令（等效用户点击开始挂卡）
-const RETRY_DELAY = 60_000;
+// 每次提交令牌后 60 秒自动重发开始挂卡命令
+const RETRY_AFTER = 60_000;
+// 自动重发计失败次数上限：第 3 次输入后 60 秒仍未反馈登录成功 → 中止
+export const MAX_ATTEMPTS = 3;
+const FAIL_MSG = "长时间未登录成功，请检查账号密码，或等待一段时间后重新登陆";
 
-// 从 localStorage 恢复令牌登录状态；已过期的 pending 转为 failed（显示令牌错误）
+// 从 localStorage 恢复令牌登录状态；done/旧格式数据清理后返回 null
 function loadPendingLogin(): PendingLogin | null {
   try {
     const raw = localStorage.getItem(LS_KEY);
     if (!raw) return null;
-    const p = JSON.parse(raw) as { acc?: { bot_name?: string; server_id?: number | null }; deadline?: number; status?: string };
+    const p = JSON.parse(raw) as { acc?: { bot_name?: string; server_id?: number | null }; deadline?: number; attempts?: number; status?: string };
     if (!p.acc?.bot_name) return null;
     const acc = { bot_name: p.acc.bot_name, server_id: p.acc.server_id ?? null };
-    if (p.status === "failed") return { acc, deadline: p.deadline ?? 0, status: "failed" };
     if (p.status === "pending") {
-      if (p.deadline && Date.now() < p.deadline) return { acc, deadline: p.deadline, status: "pending" };
-      return { acc, deadline: p.deadline ?? 0, status: "failed" };
+      return { acc, deadline: p.deadline ?? Date.now() + RETRY_AFTER, attempts: p.attempts ?? 0, status: "pending" };
     }
+    // done 或历史 failed 数据：清理，不再阻塞卡片
+    localStorage.removeItem(LS_KEY);
     return null;
   } catch {
     return null;
@@ -80,7 +83,7 @@ export function useFarmLogin(onLoggedIn?: () => void): FarmLoginApi {
     setPendingLogin(v);
     try {
       if (v && v.status !== "done") {
-        localStorage.setItem(LS_KEY, JSON.stringify({ acc: { bot_name: v.acc.bot_name, server_id: v.acc.server_id }, deadline: v.deadline, status: v.status }));
+        localStorage.setItem(LS_KEY, JSON.stringify({ acc: { bot_name: v.acc.bot_name, server_id: v.acc.server_id }, deadline: v.deadline, attempts: v.attempts, status: v.status }));
       } else {
         localStorage.removeItem(LS_KEY);
       }
@@ -92,7 +95,7 @@ export function useFarmLogin(onLoggedIn?: () => void): FarmLoginApi {
   // 挂载时恢复持久化的令牌登录状态：刷新/重进页面后继续后台轮询
   useEffect(() => {
     if (pendingLogin?.status === "pending") {
-      void waitTokenLogin(pendingLogin.acc, pendingLogin.deadline);
+      void waitTokenLogin(pendingLogin.acc, pendingLogin.deadline, pendingLogin.attempts);
     }
     // 仅在挂载时恢复一次
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -111,6 +114,14 @@ export function useFarmLogin(onLoggedIn?: () => void): FarmLoginApi {
     }
     setLastDoneBot(acc.bot_name);
     setTimeout(() => setLastDoneBot((cur) => (cur === acc.bot_name ? null : cur)), 30_000);
+  }
+
+  // 中止：弹出"长时间未登录成功"提示并清除后台状态，回到点挂卡前
+  function abort(acc: Pick<Account, "bot_name" | "server_id">) {
+    applyPending(null);
+    setFarming(acc as Account);
+    setStage("failed");
+    setMsg(FAIL_MSG);
   }
 
   // 重新发送"开始挂卡"命令：预注入拒绝二维码 + Start，等效用户点击开始挂卡
@@ -136,40 +147,51 @@ export function useFarmLogin(onLoggedIn?: () => void): FarmLoginApi {
   }
 
   // 令牌提交后的后台登录轮询：卡片显示"正在登录，请稍后"；
-  // 提交 60 秒后自动重发一次开始挂卡命令（等效用户点击开始挂卡，解决
-  // ASF 验证慢/卡住时需手动二次挂卡的问题）；成功 → 卡片绿；5 分钟未成功 → 令牌错误
-  async function waitTokenLogin(acc: Pick<Account, "bot_name" | "server_id">, deadline = Date.now() + TOKEN_LOGIN_TIMEOUT) {
-    // 自动重发时刻 = 提交时刻 + 60 秒（提交时刻 = deadline - TOKEN_LOGIN_TIMEOUT）
-    const retryAt = deadline - (TOKEN_LOGIN_TIMEOUT - RETRY_DELAY);
+  // 提交后 60 秒自动重发一次开始挂卡命令（等效用户点击开始挂卡）并计一次失败；
+  // ASF 要求令牌时：attempts < 3 → 自动重弹输入框（等效点挂卡后的下一步）；
+  // attempts >= 3（第 3 次输入后 60 秒仍未反馈登录成功）→ 中止
+  async function waitTokenLogin(acc: Pick<Account, "bot_name" | "server_id">, deadline: number, attempts: number) {
     let retried = false;
-    while (Date.now() < deadline) {
-      // 到点且未重发过 → 自动重发一次开始挂卡命令（刷新恢复后若已过点也会立即补发）
-      if (!retried && Date.now() >= retryAt) {
-        retried = true;
-        await resendStart(acc);
-      }
+    while (true) {
       try {
         const resp = await apiRaw(`/api/proxy/${acc.server_id}/Api/Bot/${encodeURIComponent(acc.bot_name)}`, { method: "GET" });
         const j = (await resp.json()) as { Result?: Record<string, { RequiredInput?: number; IsConnectedAndLoggedOn?: boolean }> };
         const bot = j.Result?.[acc.bot_name];
         if (bot?.IsConnectedAndLoggedOn) {
           await confirmOnline(acc);
-          applyPending({ acc, deadline, status: "done" });
+          applyPending({ acc, deadline, attempts, status: "done" });
           onLoggedIn?.();
           return;
         }
-        // ASF 再次要求输入令牌 → 令牌未通过
+        // ASF 要求再次输入令牌
         const req = bot?.RequiredInput ?? 0;
         if (req === 3 || req === 5) {
-          applyPending({ acc, deadline, status: "failed" });
+          if (attempts >= MAX_ATTEMPTS) {
+            abort(acc);
+            return;
+          }
+          // 自动重弹令牌输入框（等效手动点开始挂卡的下一步），本轮后台循环结束，等待用户提交
+          setInputType(req);
+          setStage("input");
+          setFarming(acc as Account);
           return;
         }
       } catch {
         // 网络抖动，继续
       }
+      // 提交后 60 秒：自动重发开始挂卡命令（计一次失败）
+      if (!retried && Date.now() >= deadline) {
+        retried = true;
+        const next = attempts + 1;
+        applyPending({ acc, deadline, attempts: next, status: "pending" });
+        await resendStart(acc);
+        if (next >= MAX_ATTEMPTS) {
+          abort(acc);
+          return;
+        }
+      }
       await new Promise((r) => setTimeout(r, 2000));
     }
-    applyPending({ acc, deadline, status: "failed" });
   }
 
   // 密码登录轮询（弹窗内）：60 秒超时 → "登录失败，请检查账号密码"
@@ -232,7 +254,7 @@ export function useFarmLogin(onLoggedIn?: () => void): FarmLoginApi {
       setNoTimeAcc(acc);
       return;
     }
-    // 开始新挂卡：清除该账号此前的令牌后台登录状态（如"令牌错误"残留）
+    // 开始新挂卡：清除该账号此前的令牌后台登录状态（如残留的"正在登录"）
     applyPending(null);
     setFarming(acc);
     setStage("starting");
@@ -283,13 +305,14 @@ export function useFarmLogin(onLoggedIn?: () => void): FarmLoginApi {
         return;
       }
       setCode("");
-      // 弹窗显示"提交成功"，短暂停留后回桌面，卡片显示"正在登录，请稍后"
+      // 弹窗显示"提交成功"，短暂停留后自动回桌面，卡片显示"正在登录，请稍后"
       setMsg("提交成功");
-      const deadline = Date.now() + TOKEN_LOGIN_TIMEOUT;
-      applyPending({ acc: { bot_name: acc.bot_name, server_id: acc.server_id }, deadline, status: "pending" });
+      const attempts = pendingLogin?.attempts ?? 0;
+      const deadline = Date.now() + RETRY_AFTER;
+      applyPending({ acc: { bot_name: acc.bot_name, server_id: acc.server_id }, deadline, attempts, status: "pending" });
       setTimeout(() => {
-        close();
-        void waitTokenLogin(acc, deadline);
+        close(true); // 自动关闭，保留 pendingLogin 进入后台等待
+        void waitTokenLogin(acc, deadline, attempts);
       }, 1500);
     } catch {
       setStage("failed");
@@ -297,7 +320,10 @@ export function useFarmLogin(onLoggedIn?: () => void): FarmLoginApi {
     }
   }
 
-  function close() {
+  // 关闭弹窗；auto=true 为提交成功后的自动关闭（保留令牌后台状态），
+  // 手动关闭（用户点 X / 关闭）则清除令牌后台状态，回到点挂卡前
+  function close(auto = false) {
+    if (!auto) applyPending(null);
     setFarming(null);
     setStage("starting");
   }
