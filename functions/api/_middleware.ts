@@ -4,7 +4,7 @@ import type { Env } from "../lib/db.ts";
 import { json } from "../lib/db.ts";
 import { authenticate } from "../lib/auth.ts";
 
-const PUBLIC_PATHS = ["/api/auth/register", "/api/auth/login", "/api/auth/refresh", "/api/auth/renew", "/api/cron"];
+const PUBLIC_PATHS = ["/api/auth/register", "/api/auth/login", "/api/auth/refresh", "/api/auth/renew", "/api/auth/logout", "/api/cron"];
 
 export const onRequest: PagesFunction<Env> = async (context) => {
   const { request, env, next } = context;
