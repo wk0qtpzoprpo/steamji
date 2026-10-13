@@ -138,6 +138,15 @@ async function restoreMissingBot(env: Env, server: ServerRow, acc: AccountRow): 
     return;
   }
   await logMigration(env, acc.id, server.id, server.id, "restore", `服务器数据丢失后已自动重建 bot ${acc.bot_name}`);
+  // 自动拒绝二维码登录（ASF 重建后默认询问 QrCodeLogin），让 bot 用已存凭据走密码登录
+  try {
+    await proxyToAsf(env, server, `Api/Bot/${encodeURIComponent(acc.bot_name)}/Input`, {
+      method: "POST",
+      body: JSON.stringify({ Type: 8, Value: "N" }),
+    });
+  } catch {
+    // 提交失败由 runSettlePendingPlays 兜底
+  }
   // 恢复挂时长：会话指向本服务器并置 pending，由 runSettlePendingPlays 补发 play
   await env.DB.prepare(
     "UPDATE play_sessions SET server_id = ?, status = 'pending' WHERE account_id = ? AND status IN ('pending','active')"
@@ -317,6 +326,18 @@ export async function runSettlePendingPlays(env: Env) {
       const server = await env.DB.prepare("SELECT * FROM servers WHERE id = ?").bind(r.server_id).first<ServerRow>();
       if (!server || server.status !== "online") continue;
       const st = await readBotState(env, server, r.bot_name);
+      if (st?.requiredInput === 8) {
+        // ASF 询问二维码登录 → 自动拒绝，走密码登录（凭据存于 D1）
+        try {
+          await proxyToAsf(env, server, `Api/Bot/${encodeURIComponent(r.bot_name)}/Input`, {
+            method: "POST",
+            body: JSON.stringify({ Type: 8, Value: "N" }),
+          });
+        } catch {
+          // 忽略，下轮重试
+        }
+        continue;
+      }
       if (!st?.online) continue;
       const appIds = parseAppIds(r.app_ids);
       if (appIds.length === 0) continue;
