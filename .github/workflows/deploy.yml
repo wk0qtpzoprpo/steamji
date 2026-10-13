@@ -132,6 +132,14 @@ jobs:
           echo "--- wrangler.toml 注入结果 ---"
           grep -E "database_id|id =" wrangler.toml
 
+      - name: 二次部署检测提示
+        run: |
+          set -euo pipefail
+          EXIST=$(curl -s "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT_NAME"             -H "X-Auth-Email: $CLOUDFLARE_EMAIL" -H "X-Auth-Key: $CLOUDFLARE_API_KEY" | python3 -c             "import sys,json;d=json.load(sys.stdin);print('yes' if d.get('success') and d.get('result') else 'no')" || true)
+          if [ "$EXIST" = "yes" ]; then
+            echo "::warning::检测到已有 Pages 项目（二次部署）。若此前未配置固定的 ENCRYPT_KEY/JWT_SECRET/CRON_TOKEN secrets，本次将自动轮换密钥，导致 D1 中已加密的凭据（服务器 IPC 密码 / Steam 密码 / 管理员密码）无法解密。建议配置固定 ENCRYPT_KEY 后重试。"
+          fi
+
       - name: 执行数据库迁移（migrations 全部应用）
         run: npx wrangler d1 migrations apply asf-ipc-console --remote
 
