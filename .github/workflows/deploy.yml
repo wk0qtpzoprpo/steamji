@@ -74,7 +74,9 @@ jobs:
             echo "ENCRYPT_KEY=$ENCRYPT_KEY"
             echo "CRON_TOKEN=$CRON_TOKEN"
             echo "ADMIN_USERNAME=$ADMIN_USERNAME"
+            echo "INIT_ADMIN_USERNAME=$ADMIN_USERNAME"
             echo "ADMIN_PASSWORD=$ADMIN_PASSWORD"
+            echo "INIT_ADMIN_PASSWORD=$ADMIN_PASSWORD"
             echo "GENERATED_PASS=$GENERATED_PASS"
           } >> "$GITHUB_ENV"
         env:
@@ -94,8 +96,11 @@ jobs:
             "import sys,json;raw=[l for l in sys.stdin if not l.startswith('Proxy')];d=json.loads(''.join(raw));print(next((x['uuid'] for x in d if x['name']=='asf-ipc-console'),''))" || true)
           if [ -z "$D1_ID" ]; then
             echo "D1 不存在，创建中…"
-            D1_ID=$(npx wrangler d1 create asf-ipc-console --json 2>/dev/null | python3 -c \
-              "import sys,json;print(json.load(sys.stdin)['result']['uuid'])")
+            # 注意：wrangler d1 create 不支持 --json，改用 Cloudflare API 创建并解析 uuid
+            D1_ID=$(curl -s -X POST "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database" \
+              -H "X-Auth-Email: $CLOUDFLARE_EMAIL" -H "X-Auth-Key: $CLOUDFLARE_API_KEY" \
+              -H "Content-Type: application/json" -d '{"name":"asf-ipc-console"}' | python3 -c \
+              "import sys,json;r=json.load(sys.stdin);print(r['result']['uuid'] if r.get('success') else '')")
           else
             echo "D1 已存在，复用"
           fi
@@ -140,19 +145,32 @@ jobs:
         run: |
           set -euo pipefail
           for s in JWT_SECRET ENCRYPT_KEY CRON_TOKEN INIT_ADMIN_USERNAME INIT_ADMIN_PASSWORD; do
-            echo "${!s}" | npx wrangler pages secret put "$s" --project-name asf-ipc-console
+            # printf（非 echo）避免尾随换行进入 secret 值，否则 INIT_ADMIN 密码匹配失败
+            printf '%s' "${!s}" | npx wrangler pages secret put "$s" --project-name asf-ipc-console
           done
           echo "5 个 Pages secrets 已写入"
 
       - name: 部署到 Cloudflare Pages（production）
         run: npx wrangler pages deploy dist --project-name asf-ipc-console --branch main
 
+      - name: 获取实际 Pages 域名（子域冲突时 CF 自动加后缀，须用真实域名）
+        run: |
+          set -euo pipefail
+          PAGES_URL=$(curl -s "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT_NAME" \
+            -H "X-Auth-Email: $CLOUDFLARE_EMAIL" -H "X-Auth-Key: $CLOUDFLARE_API_KEY" | python3 -c \
+            "import sys,json;r=json.load(sys.stdin);d=r.get('result',{});print('https://'+d['domains'][0] if r.get('success') and d.get('domains') else '')")
+          if [ -z "$PAGES_URL" ]; then
+            echo "::error::无法获取 Pages 实际域名"; exit 1
+          fi
+          echo "PAGES_URL=$PAGES_URL" >> "$GITHUB_ENV"
+          echo "实际部署域名: $PAGES_URL"
+
       - name: 部署 Cron Worker（定时任务：健康检查/故障转移/校准/到期标记）
         run: |
           set -euo pipefail
           # 注入部署目标域名（PAGES_URL 占位符 → 实际域名）
-          sed -i "s|PAGES_URL_PLACEHOLDER|https://$PROJECT_NAME.pages.dev|g" worker-cron/wrangler.toml
-          echo "$CRON_TOKEN" | npx wrangler secret put CRON_TOKEN --config worker-cron/wrangler.toml
+          sed -i "s|PAGES_URL_PLACEHOLDER|$PAGES_URL|g" worker-cron/wrangler.toml
+          printf '%s' "$CRON_TOKEN" | npx wrangler secret put CRON_TOKEN --config worker-cron/wrangler.toml
           npx wrangler deploy --config worker-cron/wrangler.toml
           echo "Cron Worker 已部署"
 
@@ -160,7 +178,7 @@ jobs:
         run: |
           sleep 20   # 等待 Pages 部署生效
           BODY=$(python3 -c "import json,sys;print(json.dumps({'username':sys.argv[1],'password':sys.argv[2]}))" "$ADMIN_USERNAME" "$ADMIN_PASSWORD")
-          RESP=$(curl -s -X POST "https://$PROJECT_NAME.pages.dev/api/auth/register" \
+          RESP=$(curl -s -X POST "$PAGES_URL/api/auth/register" \
             -H 'Content-Type: application/json' -d "$BODY" || true)
           echo "register 响应: $RESP"
 
@@ -169,7 +187,7 @@ jobs:
           {
             echo "## 🎉 Steam姬 部署完成"
             echo ""
-            echo "- 🌐 控制台：https://$PROJECT_NAME.pages.dev"
+            echo "- 🌐 控制台：$PAGES_URL"
             echo "- 👤 管理员账号：\`$ADMIN_USERNAME\`"
             if [ "$GENERATED_PASS" = "1" ]; then
               echo "- 🔑 管理员密码（自动生成）：\`$ADMIN_PASSWORD\`"
