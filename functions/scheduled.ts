@@ -329,6 +329,10 @@ export async function syncAccountStatus(env: Env) {
         // ASF 询问二维码登录：不算失败，收敛路径由 runSettlePendingPlays 自动拒绝后重新 Start
         continue;
       }
+      // 已标记"需重新登录/账号异常"：保持现状等用户手动操作（不累计失败，避免误转 account_error）
+      if (acc.auth_state === "login_required" || acc.auth_state === "account_error") {
+        continue;
+      }
       // 其他未登录状态（0=登录中止/失败、1=需要登录、2=需要密码、4/6 等）→ 累计失败
       // 连续 LOGIN_FAIL_LIMIT 次仍登不上 → 标记"账号异常"，停止自动重试（等用户手动挂卡）
       const failCount = (acc.login_fail_count ?? 0) + 1;
