@@ -331,8 +331,8 @@ export async function runCalibration(env: Env) {
 // ---------- 挂时长 pending 兜底：bot 已登录则补发 play ----------
 export async function runSettlePendingPlays(env: Env) {
   const rows = await env.DB.prepare(
-    "SELECT * FROM play_sessions WHERE status = 'pending'"
-  ).all<{ id: number; bot_name: string; server_id: number; app_ids: string }>();
+    "SELECT * FROM play_sessions WHERE status IN ('pending','active')"
+  ).all<{ id: number; bot_name: string; server_id: number; app_ids: string; display_name: string | null }>();
   for (const r of rows.results) {
     try {
       const server = await env.DB.prepare("SELECT * FROM servers WHERE id = ?").bind(r.server_id).first<ServerRow>();
@@ -363,8 +363,12 @@ export async function runSettlePendingPlays(env: Env) {
       }
       const appIds = parseAppIds(r.app_ids);
       if (appIds.length === 0) continue;
+      // 补发 play 时携带挂时长会话的自定义显示名（否则显示名丢失，好友看到默认游戏名）
+      const displayName = (r.display_name || "").trim() || null;
       const playResp = await callAsfCommand(env, server, "Api/Command", "POST", {
-        Command: `play ${r.bot_name} ${appIds.join(",")}`,
+        Command: displayName
+          ? `play ${r.bot_name} ${appIds.join(",")} ${displayName}`
+          : `play ${r.bot_name} ${appIds.join(",")}`,
       });
       if (!playResp.ok) continue;
       await env.DB.prepare(
