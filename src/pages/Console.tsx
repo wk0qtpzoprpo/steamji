@@ -104,6 +104,7 @@ export default function Console() {
             key={acc.id}
             acc={acc}
             farmingId={farm.farming?.id ?? null}
+            lastDoneBot={farm.lastDoneBot}
             onStart={() => farm.startFarming(acc)}
             onRename={() => void renameAccount(acc)}
             onEdit={() => void editAccount(acc)}

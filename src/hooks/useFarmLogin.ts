@@ -12,6 +12,7 @@ export type FarmStage = "starting" | "polling" | "input" | "done" | "failed";
 export interface FarmLoginApi {
   farming: Account | null;
   noTimeAcc: Account | null;
+  lastDoneBot: string | null;
   stage: FarmStage;
   inputType: 3 | 5;
   code: string;
@@ -26,6 +27,7 @@ export interface FarmLoginApi {
 export function useFarmLogin(onLoggedIn?: () => void): FarmLoginApi {
   const [farming, setFarming] = useState<Account | null>(null);
   const [noTimeAcc, setNoTimeAcc] = useState<Account | null>(null);
+  const [lastDoneBot, setLastDoneBot] = useState<string | null>(null);
   const [stage, setStage] = useState<FarmStage>("starting");
   const [inputType, setInputType] = useState<3 | 5>(3);
   const [code, setCode] = useState("");
@@ -48,6 +50,20 @@ export function useFarmLogin(onLoggedIn?: () => void): FarmLoginApi {
         return;
       }
       if (bot.IsConnectedAndLoggedOn) {
+        // B：登录已实时确认 → 先通知后端将该账号标记为在线（消除 D1 低频同步滞后），
+        // 再显示"登录成功"；这样关闭弹窗后 load() 读到的就是 online，卡片直接绿
+        try {
+          await apiRaw("/api/accounts/mark-online", {
+            method: "POST",
+            body: JSON.stringify({ bot_name: acc.bot_name }),
+            headers: { "Content-Type": "application/json" },
+          });
+        } catch {
+          // 标记失败则交给低频同步兜底
+        }
+        // A：记录"刚登录成功"的 bot，卡片在列表刷新前短暂显示绿灯
+        setLastDoneBot(acc.bot_name);
+        setTimeout(() => setLastDoneBot((cur) => (cur === acc.bot_name ? null : cur)), 30_000);
         setStage("done");
         setMsg("登录成功");
         onLoggedIn?.();
@@ -154,5 +170,5 @@ export function useFarmLogin(onLoggedIn?: () => void): FarmLoginApi {
     setNoTimeAcc(null);
   }
 
-  return { farming, noTimeAcc, stage, inputType, code, msg, startFarming, submitCode, setCode, close, dismissNoTime };
+  return { farming, noTimeAcc, lastDoneBot, stage, inputType, code, msg, startFarming, submitCode, setCode, close, dismissNoTime };
 }
