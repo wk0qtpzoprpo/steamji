@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api, apiRaw, del, putJson } from "../lib/api";
+import { fmtExpireSlash, fmtDuration, steamCover } from "../lib/format";
 
 interface Account {
   id: number;
@@ -53,28 +54,6 @@ interface PlaySession {
 
 type ModeKey = "farm" | "play";
 type TabKey = "recommend" | "all" | "done";
-
-function fmtExpire(v: string | null): string {
-  if (!v) return "无可用时间";
-  const d = new Date(v);
-  if (Number.isNaN(d.getTime())) return "无可用时间";
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}/${m}/${day}`;
-}
-
-function fmtDuration(sec: number): string {
-  const s = Math.max(0, Math.floor(sec));
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const ss = s % 60;
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(ss).padStart(2, "0")}`;
-}
-
-function steamCover(appId: number | undefined): string | null {
-  return appId ? `https://cdn.cloudflare.steamstatic.com/steam/apps/${appId}/header.jpg` : null;
-}
 
 export default function AccountDetail() {
   const { id } = useParams<{ id: string }>();
@@ -434,7 +413,7 @@ export default function AccountDetail() {
           {!loggedOn && <span className="badge badge-warn">未登录</span>}
         </div>
         <div className="detail-topbar-right">
-          <span className={`expire-chip ${expired ? "warn" : ""}`}>有效至 {fmtExpire(account.expires_at)}</span>
+          <span className={`expire-chip ${expired ? "warn" : ""}`}>有效至 {fmtExpireSlash(account.expires_at)}</span>
           <button className="btn btn-sm btn-secondary" onClick={() => void load()} disabled={refreshing}>
             {refreshing ? "重扫中…" : "重扫"}
           </button>

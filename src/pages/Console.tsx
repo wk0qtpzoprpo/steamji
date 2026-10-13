@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 import { api, postJson, putJson, del, apiRaw, ApiError } from "../lib/api";
+import { fmtExpireDash } from "../lib/format";
 
 interface Account {
   id: number;
@@ -17,16 +18,6 @@ interface Account {
 }
 
 const LIGHT: Record<string, string> = { online: "online", offline: "offline", pending: "pending" };
-
-// 本地时区格式化 YYYY-MM-DD（年月日）
-function fmtExpire(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
 
 export default function Console() {
   const { me, reload } = useAuth();
@@ -302,7 +293,7 @@ export default function Console() {
                   {acc.expires_at
                     ? new Date(acc.expires_at).getTime() < Date.now()
                       ? "已到期 · 请兑换卡密"
-                      : `使用期至 ${fmtExpire(acc.expires_at)}`
+                      : `使用期至 ${fmtExpireDash(acc.expires_at)}`
                     : "无可用时间"}
                 </div>
               </div>
