@@ -117,6 +117,8 @@ export const onRequestDelete: PagesFunction<Env, Params> = async ({ env, data, p
   }
 
   await env.DB.prepare("DELETE FROM steam_accounts WHERE id = ?").bind(account.id).run();
+  // 级联清理该账户的挂时长/挂卡会话，避免残留 pending 会话被 settle 反复空转
+  await env.DB.prepare("DELETE FROM play_sessions WHERE account_id = ?").bind(account.id).run();
   await env.DB.prepare("UPDATE servers SET bot_count = bot_count - 1 WHERE id = ?").bind(account.current_server_id).run();
   return ok({}, "已删除");
 };
