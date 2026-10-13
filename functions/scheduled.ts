@@ -1,12 +1,12 @@
 // Cron 处理器（Pages Functions onScheduled）
 // cron 时间表见 wrangler.toml [triggers]
-//  */5 * * * *  健康检查 + 回迁禁用
-//  0 * * * *    故障转移 + bot_count 校准
+//  */10 * * * *  健康检查 + 回迁禁用
+//  0 * * * *    故障转移 + bot_count 校准 + 挂时长兜底
 //  0 3 * * *    订阅到期标记
 // 若事件不含 cron 字段（兼容兜底），则全量执行（所有任务幂等）
 import type { Env, ServerRow, AccountRow } from "./lib/db.ts";
 import { pingAsf, proxyToAsf, readBotState, callAsfCommand } from "./lib/asf.ts";
-import { decryptData } from "./lib/crypto.ts";
+import { decryptData, decryptAccountPassword } from "./lib/crypto.ts";
 import { parseAppIds } from "./lib/ids.ts";
 
 const HOUR = 3600_000;
@@ -86,6 +86,55 @@ async function disableMigratedCopies(env: Env, server: ServerRow) {
   }
 }
 
+// 服务器在线但 ASF 侧 bot 缺失（如 Render 无持久化磁盘重启丢数据）→ 按 D1 凭据自动重建
+// 仅在账号正常归属（migration_status=active）时重建；已迁走/已禁用的副本不重建，避免双端在线
+async function restoreMissingBot(env: Env, server: ServerRow, acc: AccountRow): Promise<void> {
+  if (acc.migration_status !== "active") return;
+  let password: string;
+  try {
+    password = await decryptAccountPassword(acc, env.ENCRYPT_KEY);
+  } catch {
+    await logMigration(env, acc.id, server.id, server.id, "restore_failed", "密码解密失败，需人工处理");
+    return;
+  }
+  let ok_ = false;
+  try {
+    const resp = await proxyToAsf(env, server, `Api/Bot/${encodeURIComponent(acc.bot_name)}`, {
+      method: "POST",
+      body: JSON.stringify({
+        BotConfig: {
+          Enabled: true,
+          SteamLogin: acc.steam_username,
+          SteamPassword: password,
+          OnlineStatus: acc.online_status ?? 0,
+          CustomGamePlayedWhileFarming: acc.display_name || null,
+          // 禁止自动挂卡：挂卡必须由用户手动发起（经"无可用时间"校验）
+          AutoStart: false,
+        },
+      }),
+    });
+    if (resp.ok) {
+      try {
+        const j = (await resp.json()) as { Success?: boolean };
+        ok_ = j.Success !== false;
+      } catch {
+        ok_ = true;
+      }
+    }
+  } catch {
+    ok_ = false;
+  }
+  if (!ok_) {
+    await logMigration(env, acc.id, server.id, server.id, "restore_failed", "在服务器重建 bot 失败，下轮重试");
+    return;
+  }
+  await logMigration(env, acc.id, server.id, server.id, "restore", `服务器数据丢失后已自动重建 bot ${acc.bot_name}`);
+  // 恢复挂时长：会话指向本服务器并置 pending，由 runSettlePendingPlays 补发 play
+  await env.DB.prepare(
+    "UPDATE play_sessions SET server_id = ?, status = 'pending' WHERE account_id = ? AND status IN ('pending','active')"
+  ).bind(server.id, acc.id).run();
+}
+
 // ---------- 故障转移：迁移离线 ≥24h 服务器上的账号 ----------
 export async function runMigration(env: Env) {
   const cutoff = new Date(Date.now() - DAY).toISOString();
@@ -125,6 +174,9 @@ export async function runMigration(env: Env) {
               Enabled: true,
               SteamLogin: acc.steam_username,
               SteamPassword: password,
+              OnlineStatus: acc.online_status ?? 0,
+              CustomGamePlayedWhileFarming: acc.display_name || null,
+              AutoStart: false,
             },
           }),
         });
@@ -150,6 +202,10 @@ export async function runMigration(env: Env) {
       ).bind(target.id, acc.id).run();
       await env.DB.prepare("UPDATE servers SET bot_count = bot_count - 1 WHERE id = ?").bind(source.id).run();
       await env.DB.prepare("UPDATE servers SET bot_count = bot_count + 1 WHERE id = ?").bind(target.id).run();
+      // 挂时长会话随账号迁移到新服务器并置 pending，由 runSettlePendingPlays 补发 play
+      await env.DB.prepare(
+        "UPDATE play_sessions SET server_id = ?, status = 'pending' WHERE account_id = ? AND status IN ('pending','active')"
+      ).bind(target.id, acc.id).run();
       await logMigration(
         env,
         acc.id,
@@ -188,7 +244,12 @@ export async function syncAccountStatus(env: Env) {
 
     for (const acc of accounts.results) {
       const bot = botMap[acc.bot_name];
-      const newStatus = bot ? (bot.IsConnectedAndLoggedOn ? "online" : "offline") : "offline";
+      if (!bot) {
+        // ASF 侧 bot 缺失（服务器重启/数据丢失）→ 自动重建，状态由下轮同步更新
+        await restoreMissingBot(env, server, acc);
+        continue;
+      }
+      const newStatus = bot.IsConnectedAndLoggedOn ? "online" : "offline";
       await env.DB.prepare(
         "UPDATE steam_accounts SET status = ? WHERE id = ? AND status != ?"
       ).bind(newStatus, acc.id, newStatus).run();
@@ -274,13 +335,14 @@ export async function runExpiry(env: Env) {
 export const onScheduled = async (event: unknown, env: Env) => {
   const cron = (event as { cron?: string } | null)?.cron;
   try {
-    if (!cron || cron === "*/5 * * * *") {
+    if (!cron || cron === "*/10 * * * *") {
       await runHealthCheck(env);
       await syncAccountStatus(env);
     }
     if (!cron || cron === "0 * * * *") {
       await runMigration(env);
       await runCalibration(env);
+      await runSettlePendingPlays(env);
     }
     if (!cron || cron === "0 3 * * *") {
       await runExpiry(env);

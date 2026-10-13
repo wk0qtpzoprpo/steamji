@@ -18,7 +18,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   if (!env.CRON_TOKEN || token !== env.CRON_TOKEN) return fail("未授权", 401);
 
   const cron = request.headers.get("X-Cron") || "";
-  if (!cron || cron === "*/5 * * * *") {
+  if (!cron || cron === "*/10 * * * *") {
     await runHealthCheck(env);
     await syncAccountStatus(env);
     await stopExpiredBots(env);

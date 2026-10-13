@@ -48,6 +48,8 @@ export interface AccountRow {
   migration_status: string;
   status: string;
   created_at: string;
+  online_status?: number;
+  display_name?: string | null;
 }
 
 export function json(data: unknown, status = 200): Response {
