@@ -151,6 +151,18 @@ async function restoreMissingBot(env: Env, server: ServerRow, acc: AccountRow): 
   await env.DB.prepare(
     "UPDATE play_sessions SET server_id = ?, status = 'pending' WHERE account_id = ? AND status IN ('pending','active')"
   ).bind(server.id, acc.id).run();
+  // 有挂时长会话时自动 Start（ASF 重建后 bot 处于停止态，不 Start 不会登录；
+  // 无会话则保持停止，挂卡模式仍由用户手动发起，遵守"无可用时间禁挂卡"规则）
+  const hasPlay = await env.DB.prepare(
+    "SELECT id FROM play_sessions WHERE account_id = ? AND status = 'pending' LIMIT 1"
+  ).bind(acc.id).first<{ id: number }>();
+  if (hasPlay) {
+    try {
+      await proxyToAsf(env, server, `Api/Bot/${encodeURIComponent(acc.bot_name)}/Start`, { method: "POST" });
+    } catch {
+      // 启动失败由用户手动重试
+    }
+  }
 }
 
 // ---------- 故障转移：迁移离线 ≥24h 服务器上的账号 ----------
