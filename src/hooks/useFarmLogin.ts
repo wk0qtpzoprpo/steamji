@@ -11,9 +11,10 @@ import { useEffect, useState } from "react";
 import { apiRaw } from "../lib/api";
 import type { Account } from "../pages/account-detail/types";
 
-// ASF V6 EUserInputType：3=SteamGuard(邮箱令牌) 5=TwoFactorAuthentication(Steam令牌) 8=QrCodeLogin(二维码)
+// ASF V6 EUserInputType：3=SteamGuard(邮箱令牌) 5=TwoFactorAuthentication(Steam令牌) 7=DeviceConfirmation(设备确认) 8=QrCodeLogin(二维码)
 // 8 表示 ASF 询问是否二维码登录：自动提交 N（拒绝，改用密码登录）
-export const INPUT_TYPES = { 3: "邮箱令牌", 5: "Steam 令牌" } as const;
+// 7（设备确认）无码可输：自动提交 Y（接受），用户在手机 Steam App 上确认登录
+export const INPUT_TYPES = { 3: "邮箱令牌", 5: "Steam 令牌", 7: "设备确认" } as const;
 export type FarmStage = "starting" | "polling" | "input" | "done" | "failed";
 
 // 令牌后台登录状态：提交令牌后弹窗关闭，卡片异步显示登录进度；
@@ -58,7 +59,7 @@ export interface FarmLoginApi {
   pendingLogin: PendingLogin | null;
   lastDoneBot: string | null;
   stage: FarmStage;
-  inputType: 3 | 5;
+  inputType: 3 | 5 | 7;
   code: string;
   msg: string;
   startFarming: (acc: Account) => void;
@@ -74,7 +75,7 @@ export function useFarmLogin(onLoggedIn?: () => void): FarmLoginApi {
   const [pendingLogin, setPendingLogin] = useState<PendingLogin | null>(loadPendingLogin);
   const [lastDoneBot, setLastDoneBot] = useState<string | null>(null);
   const [stage, setStage] = useState<FarmStage>("starting");
-  const [inputType, setInputType] = useState<3 | 5>(3);
+  const [inputType, setInputType] = useState<3 | 5 | 7>(3);
   const [code, setCode] = useState("");
   const [msg, setMsg] = useState("");
 
@@ -165,7 +166,18 @@ export function useFarmLogin(onLoggedIn?: () => void): FarmLoginApi {
         }
         // ASF 要求再次输入令牌
         const req = bot?.RequiredInput ?? 0;
-        if (req === 3 || req === 5) {
+        if (req === 7) {
+          // 设备确认：自动接受，用户需在手机 Steam App 上确认登录；继续轮询（不计失败）
+          try {
+            await apiRaw(`/api/proxy/${acc.server_id}/Api/Bot/${encodeURIComponent(acc.bot_name)}/Input`, {
+              method: "POST",
+              body: JSON.stringify({ Type: 7, Value: "Y" }),
+              headers: { "Content-Type": "application/json" },
+            });
+          } catch {
+            // 网络抖动，继续轮询
+          }
+        } else if (req === 3 || req === 5) {
           if (attempts >= MAX_ATTEMPTS) {
             abort(acc);
             return;
@@ -219,6 +231,21 @@ export function useFarmLogin(onLoggedIn?: () => void): FarmLoginApi {
         return;
       }
       const req = bot.RequiredInput ?? 0;
+      if (req === 7) {
+        // 设备确认：自动接受，提示用户在手机 Steam App 确认登录
+        setMsg("请在手机 Steam App 确认登录…");
+        try {
+          await apiRaw(`/api/proxy/${acc.server_id}/Api/Bot/${encodeURIComponent(acc.bot_name)}/Input`, {
+            method: "POST",
+            body: JSON.stringify({ Type: 7, Value: "Y" }),
+            headers: { "Content-Type": "application/json" },
+          });
+        } catch {
+          // 继续轮询
+        }
+        await new Promise((res) => setTimeout(res, 3000));
+        return pollLogin(acc, round + 1);
+      }
       if (req === 3 || req === 5) {
         setInputType(req);
         setStage("input");

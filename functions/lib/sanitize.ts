@@ -10,5 +10,7 @@ export function sanitizeAccount(row: Record<string, unknown>) {
     expires_at: row.expires_at ?? null,
     created_at: row.created_at,
     display_name: row.display_name ?? null,
+    auth_type: row.auth_type ?? null,
+    auth_state: row.auth_state ?? null,
   };
 }

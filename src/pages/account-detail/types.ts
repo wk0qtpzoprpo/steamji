@@ -9,6 +9,8 @@ export interface Account {
   expires_at: string | null;
   created_at?: string;
   display_name?: string | null;
+  auth_type?: string | null;
+  auth_state?: string | null;
 }
 
 export interface FarmGame {

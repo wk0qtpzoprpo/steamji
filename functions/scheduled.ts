@@ -12,6 +12,13 @@ import { parseAppIds } from "./lib/ids.ts";
 const HOUR = 3600_000;
 const DAY = 24 * HOUR;
 
+// ASF V6 EUserInputType：3=SteamGuard(邮箱令牌) 5=TwoFactorAuthentication(手机令牌) 7=DeviceConfirmation(设备确认)
+// 命中即"该账号需要二次验证/用户操作才能登录"：标记 auth_type='2fa' + auth_state='login_required'，
+// 由用户点击挂卡重新走登录流程；系统不再自动 Start/play（避免空转卡令牌）
+const LOGIN_REQUIRED_INPUTS = new Set([3, 5, 7]);
+// 连续 N 次 cron 检测到"未登录且无待处理输入"（登录失败/中止）→ 标记账号异常，停止自动重试
+export const LOGIN_FAIL_LIMIT = 3;
+
 async function logMigration(
   env: Env,
   accountId: number,
@@ -151,6 +158,14 @@ async function restoreMissingBot(env: Env, server: ServerRow, acc: AccountRow): 
   await env.DB.prepare(
     "UPDATE play_sessions SET server_id = ?, status = 'pending' WHERE account_id = ? AND status IN ('pending','active')"
   ).bind(server.id, acc.id).run();
+  // 需要令牌的账号（auth_type='2fa'，含邮箱/手机令牌/设备确认）：不自动 Start——
+  // 自动 Start 会卡在令牌验证空转；改为标记"需重新登录"，由用户点击挂卡重新走登录流程
+  if (acc.auth_type === "2fa") {
+    await env.DB.prepare(
+      "UPDATE steam_accounts SET auth_state = 'login_required', login_fail_count = 0, status = 'offline' WHERE id = ?"
+    ).bind(acc.id).run();
+    return;
+  }
   // 有挂时长会话时自动 Start（ASF 重建后 bot 处于停止态，不 Start 不会登录；
   // 无会话则保持停止，挂卡模式仍由用户手动发起，遵守"无可用时间禁挂卡"规则）
   const hasPlay = await env.DB.prepare(
@@ -292,10 +307,40 @@ export async function syncAccountStatus(env: Env) {
         await restoreMissingBot(env, server, acc);
         continue;
       }
-      const newStatus = bot.IsConnectedAndLoggedOn ? "online" : "offline";
-      await env.DB.prepare(
-        "UPDATE steam_accounts SET status = ? WHERE id = ? AND status != ?"
-      ).bind(newStatus, acc.id, newStatus).run();
+      if (bot.IsConnectedAndLoggedOn) {
+        // 登录在线：清除登录异常/需重新登录标记，重置失败计数
+        await env.DB.prepare(
+          "UPDATE steam_accounts SET status = 'online', auth_state = NULL, login_fail_count = 0 WHERE id = ?"
+        ).bind(acc.id).run();
+        continue;
+      }
+      // 未登录：按 ASF 要求的输入类型分流
+      const req = bot.RequiredInput ?? 0;
+      if (LOGIN_REQUIRED_INPUTS.has(req)) {
+        // 需要邮箱令牌/手机令牌/设备确认 → 标记"需重新登录"（幂等；bot 本身处于停止态，无需显式 Stop）
+        // 同时记录该账号登录需要二次验证（auth_type='2fa'），下次丢数据重建时不再自动 Start
+        await env.DB.prepare(
+          `UPDATE steam_accounts SET status = 'offline', auth_type = COALESCE(auth_type, '2fa'),
+             auth_state = 'login_required', login_fail_count = 0 WHERE id = ?`
+        ).bind(acc.id).run();
+        continue;
+      }
+      if (req === 8) {
+        // ASF 询问二维码登录：不算失败，收敛路径由 runSettlePendingPlays 自动拒绝后重新 Start
+        continue;
+      }
+      // 其他未登录状态（0=登录中止/失败、1=需要登录、2=需要密码、4/6 等）→ 累计失败
+      // 连续 LOGIN_FAIL_LIMIT 次仍登不上 → 标记"账号异常"，停止自动重试（等用户手动挂卡）
+      const failCount = (acc.login_fail_count ?? 0) + 1;
+      if (failCount >= LOGIN_FAIL_LIMIT) {
+        await env.DB.prepare(
+          "UPDATE steam_accounts SET status = 'offline', auth_state = 'account_error', login_fail_count = 0 WHERE id = ?"
+        ).bind(acc.id).run();
+      } else {
+        await env.DB.prepare(
+          "UPDATE steam_accounts SET status = 'offline', login_fail_count = ? WHERE id = ?"
+        ).bind(failCount, acc.id).run();
+      }
     }
   }
 }
@@ -353,10 +398,12 @@ export async function runSettlePendingPlays(env: Env) {
     try {
       // A：先查账号绑定的栏位时长，无可用时间/已到期则终止会话并跳过（与 stopExpiredBots 语义一致，避免 Start/Stop 竞争）
       const accRow = await env.DB.prepare(
-        `SELECT a.id, s.expires_at FROM steam_accounts a
+        `SELECT a.id, a.auth_state, s.expires_at FROM steam_accounts a
          LEFT JOIN account_slots s ON a.slot_id = s.id WHERE a.id = ?`
-      ).bind(r.account_id).first<{ id: number; expires_at: string | null }>();
+      ).bind(r.account_id).first<{ id: number; auth_state: string | null; expires_at: string | null }>();
       if (!accRow) continue;
+      // 需重新登录/账号异常：跳过自动 Start/play，等用户点击挂卡手动登录
+      if (accRow.auth_state === "login_required" || accRow.auth_state === "account_error") continue;
       const noTime = !accRow.expires_at || new Date(accRow.expires_at).getTime() < Date.now();
       if (noTime) {
         await env.DB.prepare(

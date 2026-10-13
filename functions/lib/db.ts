@@ -50,6 +50,9 @@ export interface AccountRow {
   created_at: string;
   online_status?: number;
   display_name?: string | null;
+  auth_type?: string | null;
+  auth_state?: string | null;
+  login_fail_count?: number | null;
 }
 
 export function json(data: unknown, status = 200): Response {

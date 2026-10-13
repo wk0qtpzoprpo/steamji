@@ -12,7 +12,7 @@ export const onRequestGet: PagesFunction<Env> = async ({ env, data }) => {
   const user = data.user as { id: number; username: string; role: string };
   const rows = await env.DB.prepare(
     `SELECT a.id, a.bot_name, a.steam_username, a.status, a.created_at, a.current_server_id,
-            a.display_name, s.expires_at, sv.name AS server_name
+            a.display_name, a.auth_type, a.auth_state, s.expires_at, sv.name AS server_name
      FROM steam_accounts a
      LEFT JOIN servers sv ON a.current_server_id = sv.id
      LEFT JOIN account_slots s ON a.slot_id = s.id

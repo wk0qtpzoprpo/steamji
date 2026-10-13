@@ -25,7 +25,8 @@ interface Props {
 
 export default function AccountCard({ acc, farmingId, lastDoneBot, loginState, onStart, onRename, onEdit, onDelete, onDetail }: Props) {
   const isThis = loginState?.botName === acc.bot_name;
-  // 优先级：令牌登录中（灰）> 令牌失败（红）> 令牌成功（绿）> 密码刚登录成功（绿）> 账号实时状态
+  // 优先级：令牌登录中（灰）> 令牌失败（红）> 令牌成功（绿）> 密码刚登录成功（绿）>
+  // 需重新登录（灰，服务器丢数据后需令牌）> 账号异常（红，反复登录失败）> 账号实时状态
   const light =
     isThis && loginState.status === "pending"
       ? "pending"
@@ -33,7 +34,11 @@ export default function AccountCard({ acc, farmingId, lastDoneBot, loginState, o
         ? "offline"
         : isThis && loginState.status === "done" || lastDoneBot === acc.bot_name
           ? "online"
-          : (LIGHT[acc.status] ?? "pending");
+          : acc.auth_state === "login_required"
+            ? "pending"
+            : acc.auth_state === "account_error"
+              ? "offline"
+              : (LIGHT[acc.status] ?? "pending");
   // "登录成功"文案仅显示 2 秒（绿灯保留，等待列表同步后自然一致）
   const [showDone, setShowDone] = useState(false);
   useEffect(() => {
@@ -51,10 +56,14 @@ export default function AccountCard({ acc, farmingId, lastDoneBot, loginState, o
         ? "令牌错误，请检查"
         : isThis && loginState.status === "done" && showDone
           ? "登录成功"
-          : null;
-  // 登录中禁用挂卡按钮；登录成功（done）不阻塞
+          : acc.auth_state === "login_required"
+            ? "登录状态异常，请点击挂卡重新登录"
+            : acc.auth_state === "account_error"
+              ? "账号异常，请重新登录"
+              : null;
+  // 登录中禁用挂卡按钮；登录成功（done）不阻塞；需重新登录/账号异常不阻塞（允许点击挂卡重新登录）
   const busy = farmingId === acc.id || (isThis && loginState.status === "pending");
-  const hintClass = isThis && loginState.status === "failed" ? "error" : isThis && loginState.status === "done" ? "ok" : "pending";
+  const hintClass = isThis && loginState.status === "failed" ? "error" : isThis && loginState.status === "done" ? "ok" : acc.auth_state === "account_error" ? "error" : "pending";
   const title = loginHint ?? (lastDoneBot === acc.bot_name ? "登录成功" : acc.status);
   return (
     <div key={acc.id} className="account-card" onClick={onDetail}>

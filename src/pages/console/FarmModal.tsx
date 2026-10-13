@@ -5,7 +5,7 @@ import type { Account } from "../account-detail/types";
 interface Props {
   acc: Account;
   stage: FarmStage;
-  inputType: 3 | 5;
+  inputType: 3 | 5 | 7;
   code: string;
   msg: string;
   onCodeChange: (v: string) => void;
@@ -20,7 +20,10 @@ export default function FarmModal({ acc, stage, inputType, code, msg, onCodeChan
         <h3>{acc.bot_name} · 挂卡</h3>
         {stage === "starting" && <div className="hint">正在启动挂卡…</div>}
         {stage === "polling" && <div className="hint">正在检查登录状态…</div>}
-        {stage === "input" && msg !== "提交成功" && (
+        {stage === "input" && msg !== "提交成功" && inputType === 7 && (
+          <div className="hint">请在手机 Steam App 确认登录，确认后自动继续…</div>
+        )}
+        {stage === "input" && msg !== "提交成功" && inputType !== 7 && (
           <>
             <div className="hint">
               ASF 需要验证：请{INPUT_TYPES[inputType]} {inputType === 3 ? "（邮件验证码）" : "（手机令牌）"}

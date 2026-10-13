@@ -11,7 +11,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, data }) 
   const botName = (body?.bot_name || "").trim();
   if (!botName) return fail("bot_name 不能为空");
   await env.DB.prepare(
-    "UPDATE steam_accounts SET status = 'online' WHERE user_id = ? AND bot_name = ?"
+    "UPDATE steam_accounts SET status = 'online', auth_state = NULL, login_fail_count = 0 WHERE user_id = ? AND bot_name = ?"
   ).bind(user.id, botName).run();
   return ok({ updated: true });
 };
