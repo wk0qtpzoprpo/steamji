@@ -4,6 +4,7 @@ import type { Env } from "../../lib/db.ts";
 import { ok, fail } from "../../lib/db.ts";
 import { hashPassword, verifyPassword } from "../../lib/crypto.ts";
 import { parseJson } from "../../lib/http.ts";
+import { validatePassword } from "../../lib/validate.ts";
 
 export const onRequestPost: PagesFunction<Env> = async ({ request, env, data }) => {
   const user = data.user as { id: number; username: string; role: string };
@@ -14,7 +15,8 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, data }) 
   const newPassword = body.new_password || "";
 
   if (!oldPassword || !newPassword) return fail("原密码和新密码不能为空");
-  if (newPassword.length < 6) return fail("新密码至少 6 位");
+  const passwordErr = validatePassword(newPassword);
+  if (passwordErr) return fail(passwordErr);
   if (oldPassword === newPassword) return fail("新密码不能与原密码相同");
 
   const row = await env.DB.prepare("SELECT password_hash FROM users WHERE id = ?")

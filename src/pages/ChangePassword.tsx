@@ -45,7 +45,7 @@ export default function ChangePassword() {
         <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
         <label>确认新密码</label>
         <input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} />
-        <div className="hint">新密码至少 6 位，不能与原密码相同</div>
+        <div className="hint">新密码需超过 8 位且同时包含字母和数字，不能与原密码相同</div>
         {error && <div className="err">{error}</div>}
         {success && <div className="ok">{success}</div>}
         <button className="btn" disabled={loading}>

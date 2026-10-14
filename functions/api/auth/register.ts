@@ -6,6 +6,7 @@ import { ok, fail } from "../../lib/db.ts";
 import { hashPassword } from "../../lib/crypto.ts";
 import { signJwt } from "../../lib/jwt.ts";
 import { parseJson } from "../../lib/http.ts";
+import { validateUsername, validatePassword } from "../../lib/validate.ts";
 
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   const body = await parseJson<{ username?: string; password?: string }>(request);
@@ -13,9 +14,11 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   const username = (body.username || "").trim();
   const password = body.password || "";
 
-  if (!username || !password) return fail("用户名和密码不能为空");
-  if (username.length > 32) return fail("用户名过长（最多 32 字符）");
-  if (password.length < 6) return fail("密码至少 6 位");
+  // 账号与密码强度校验：用户名 >6 位；密码 >8 位且含字母和数字
+  const usernameErr = validateUsername(username);
+  if (usernameErr) return fail(usernameErr);
+  const passwordErr = validatePassword(password);
+  if (passwordErr) return fail(passwordErr);
 
   // 引导管理员：环境变量 INIT_ADMIN_USERNAME / INIT_ADMIN_PASSWORD 匹配时创建 admin
   const isBootstrapAdmin =

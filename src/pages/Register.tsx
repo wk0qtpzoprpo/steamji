@@ -37,8 +37,10 @@ export default function Register() {
         <form className="form" onSubmit={submit} style={{ marginLeft: 0 }}>
           <label>用户名</label>
           <input value={username} onChange={(e) => setUsername(e.target.value)} autoFocus />
+          <div className="hint">用户名需超过 6 位</div>
           <label>密码</label>
           <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          <div className="hint">密码需超过 8 位，且同时包含字母和数字</div>
           <div className="hint">免费注册，无需邀请码。注册后默认可添加 2 个账号，初始状态为「无可用时间」，可在「兑换卡密」中增加</div>
           {error && <div className="err">{error}</div>}
           <button className="btn" disabled={loading} style={{ width: "100%" }}>
