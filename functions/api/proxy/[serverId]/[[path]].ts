@@ -62,6 +62,19 @@ export const onRequest: PagesFunction<Env, Params> = async ({ request, env, data
     }
   }
 
+  // Api/Bot/{botName}* 全路径归属校验：普通用户只能操作自己名下的 bot，
+  // 防止经代理对同服务器他人 bot 改配置/Stop/Input/删除/读配置（横向越权）。
+  // admin 不受此限制（Start 路径的到期复核已在上面单独处理）。
+  const botMatch = /^Api\/Bot\/([^/]+)/.exec(path);
+  if (botMatch && user.role !== "admin") {
+    const botName = decodeURIComponent(botMatch[1]);
+    const acc = await env.DB.prepare(
+      `SELECT 1 FROM steam_accounts a
+       WHERE a.current_server_id = ? AND a.bot_name = ? AND a.user_id = ?`
+    ).bind(serverId, botName, user.id).first();
+    if (!acc) return fail("无权操作该 Bot", 403);
+  }
+
   // Api/Command 命令白名单：普通用户仅放行 play <自己的 bot> [appids...] [displayName]，
   // 其他命令（stop/delete/restart/start 等）一律拒绝——防到期绕过与横向越权。
   // admin 不受此限制（play.ts 内部调用走 callAsfCommand，不经此 HTTP 路径，不受影响）。

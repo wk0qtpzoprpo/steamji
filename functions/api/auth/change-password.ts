@@ -27,9 +27,9 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, data }) 
   if (!valid) return fail("原密码不正确");
 
   const newHash = await hashPassword(newPassword);
-  // 同时刷新 token_valid_after：使该用户所有旧 JWT（iat < 改密时间）立即失效
-  await env.DB.prepare("UPDATE users SET password_hash = ?, token_valid_after = ? WHERE id = ?")
-    .bind(newHash, new Date().toISOString(), user.id).run();
+  // 同时刷新 token_valid_after（旧 access_token 失效）与 refresh_valid_after（旧 refresh_token 失效，踢旧设备）
+  await env.DB.prepare("UPDATE users SET password_hash = ?, token_valid_after = ?, refresh_valid_after = ? WHERE id = ?")
+    .bind(newHash, new Date().toISOString(), new Date().toISOString(), user.id).run();
 
   return ok({}, "密码已修改，旧登录已失效，请重新登录");
 };

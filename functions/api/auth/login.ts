@@ -48,7 +48,12 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   );
 
   const refreshToken = crypto.randomUUID();
-  await env.KV.put(`refresh:${refreshToken}`, String(user.id), { expirationTtl: REFRESH_TTL });
+  // KV value 存 JSON {uid, iat}：refresh 时校验 iat > refresh_valid_after，实现改密后旧 refresh 失效
+  await env.KV.put(
+    `refresh:${refreshToken}`,
+    JSON.stringify({ uid: user.id, iat: now }),
+    { expirationTtl: REFRESH_TTL }
+  );
 
   return ok(
     {
