@@ -20,16 +20,18 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return json({ Success: false, Message: "未认证或登录已过期，请重新登录" }, 401);
   }
 
-  if (user.role !== "admin") {
-    const row = await env.DB.prepare(
-      "SELECT status, subscription_status FROM users WHERE id = ?"
-    ).bind(user.id).first<{ status: string; subscription_status: string }>();
-    if (!row || row.status === "disabled") {
-      return json({ Success: false, Message: "账号已被禁用" }, 403);
-    }
-    if (row.subscription_status === "expired") {
-      return json({ Success: false, Message: "服务已到期，请续期" }, 403);
-    }
+  const row = await env.DB.prepare(
+    "SELECT status, subscription_status, token_valid_after FROM users WHERE id = ?"
+  ).bind(user.id).first<{ status: string; subscription_status: string; token_valid_after: string | null }>();
+  if (!row || row.status === "disabled") {
+    return json({ Success: false, Message: "账号已被禁用" }, 403);
+  }
+  if (user.role !== "admin" && row.subscription_status === "expired") {
+    return json({ Success: false, Message: "服务已到期，请续期" }, 403);
+  }
+  // 改密后旧 token 立即失效：JWT.iat < token_valid_after 视为过期（所有用户含管理员）
+  if (row.token_valid_after && user.iat < Math.floor(new Date(row.token_valid_after).getTime() / 1000)) {
+    return json({ Success: false, Message: "密码已修改，请重新登录" }, 401);
   }
 
   context.data.user = user;

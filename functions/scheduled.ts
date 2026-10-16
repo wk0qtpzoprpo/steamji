@@ -335,6 +335,14 @@ export async function syncAccountStatus(env: Env) {
       }
       // 其他未登录状态（0=登录中止/失败、1=需要登录、2=需要密码、4/6 等）→ 累计失败
       // 连续 LOGIN_FAIL_LIMIT 次仍登不上 → 标记"账号异常"，停止自动重试（等用户手动挂卡）
+      // 但：slot 已到期的账号是被订阅任务主动 Stop 的，未登录是预期状态，不计失败（否则续费后误显"账号异常"）
+      const slotRow = await env.DB.prepare(
+        `SELECT s.expires_at FROM steam_accounts a
+         LEFT JOIN account_slots s ON a.slot_id = s.id WHERE a.id = ?`
+      ).bind(acc.id).first<{ expires_at: string | null }>();
+      if (slotRow?.expires_at && new Date(slotRow.expires_at).getTime() < Date.now()) {
+        continue;
+      }
       const failCount = (acc.login_fail_count ?? 0) + 1;
       if (failCount >= LOGIN_FAIL_LIMIT) {
         await env.DB.prepare(

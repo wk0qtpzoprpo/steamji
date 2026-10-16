@@ -71,6 +71,9 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, data }) 
   } catch {
     // 回补卡用量
     await env.DB.prepare("UPDATE invite_codes SET used_count = used_count - 1 WHERE id = ?").bind(card.id).run();
+    // 回滚 slot 到期时间到兑换前值（否则出现刷时长窗口）
+    await env.DB.prepare("UPDATE account_slots SET expires_at = ? WHERE id = ?")
+      .bind(new Date(baseMs).toISOString(), slotId).run();
     return fail("兑换失败，请稍后重试");
   }
 };

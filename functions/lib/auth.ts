@@ -5,6 +5,7 @@ export interface AuthUser {
   id: number;
   username: string;
   role: string;
+  iat: number;
 }
 
 export function getBearerToken(request: Request): string | null {
@@ -18,5 +19,5 @@ export async function authenticate(request: Request, secret: string): Promise<Au
   if (!token) return null;
   const payload = await verifyJwt(token, secret);
   if (!payload) return null;
-  return { id: Number(payload.sub), username: payload.username, role: payload.role };
+  return { id: Number(payload.sub), username: payload.username, role: payload.role, iat: Number(payload.iat) || 0 };
 }

@@ -10,7 +10,7 @@
 #
 # 【可选 secrets】（不填则自动处理）
 #   CLOUDFLARE_ACCOUNT_ID   Cloudflare 账户 ID（不填则由 API Key 自动获取，多个账户时建议填写）
-#   INIT_ADMIN_USERNAME   初始管理员用户名（默认 admin）
+#   INIT_ADMIN_USERNAME   初始管理员用户名（默认 admin001，需 >6 位）
 #   INIT_ADMIN_PASSWORD   初始管理员密码（不填则自动生成，部署后在运行摘要中查看）
 #   JWT_SECRET / ENCRYPT_KEY / CRON_TOKEN
 #
@@ -65,7 +65,7 @@ jobs:
           JWT_SECRET="${JWT_SECRET_USER:-$(openssl rand -hex 32)}"
           ENCRYPT_KEY="${ENCRYPT_KEY_USER:-$(openssl rand -hex 32)}"
           CRON_TOKEN="${CRON_TOKEN_USER:-$(openssl rand -hex 32)}"
-          ADMIN_USERNAME="${INIT_ADMIN_USERNAME_USER:-admin}"
+          ADMIN_USERNAME="${INIT_ADMIN_USERNAME_USER:-admin001}"
           ADMIN_PASSWORD="${INIT_ADMIN_PASSWORD_USER:-$(openssl rand -base64 18 | tr -dc 'A-Za-z0-9' | head -c 16)}"
           GENERATED_PASS=0
           [ -z "${INIT_ADMIN_PASSWORD_USER:-}" ] && GENERATED_PASS=1

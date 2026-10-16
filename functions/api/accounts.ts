@@ -73,8 +73,11 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, data }) 
     try {
       return await insertAccount(env, user, botName, steamUsername, password, enc, server, onlineStatus, slot);
     } catch (e) {
-      // 槽位被并发请求抢走：重选槽位再试一次
-      if (e instanceof Error && e.message === "SLOT_CONFLICT" && attempt === 0) continue;
+      // 槽位被并发请求抢走：重选槽位再试一次；第二次仍冲突返回友好 409
+      if (e instanceof Error && e.message === "SLOT_CONFLICT") {
+        if (attempt === 0) continue;
+        return fail("栏位被并发占用，请重试", 409);
+      }
       throw e;
     }
   }

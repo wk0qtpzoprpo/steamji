@@ -25,6 +25,16 @@ export const onRequest: PagesFunction<Env, Params> = async ({ request, env, data
   const search = new URL(request.url).search;
   const targetPath = path + search;
 
+  // 读取 body（所有 POST 共用，只读一次）
+  let body: ArrayBuffer | undefined;
+  if (!["GET", "HEAD"].includes(request.method)) {
+    try {
+      body = await request.arrayBuffer();
+    } catch {
+      body = undefined;
+    }
+  }
+
   // 挂卡启动强制校验：无可用时间/已到期的账户禁止 Start（防止绕过前端直接调 API）；时长取栏位
   const startMatch = /^Api\/Bot\/([^/]+)\/Start$/.exec(path);
   if (request.method === "POST" && startMatch) {
@@ -52,15 +62,32 @@ export const onRequest: PagesFunction<Env, Params> = async ({ request, env, data
     }
   }
 
-  const method = request.method;
-  let body: ArrayBuffer | undefined;
-  if (!["GET", "HEAD"].includes(method)) {
+  // Api/Command 命令白名单：普通用户仅放行 play <自己的 bot> [appids...] [displayName]，
+  // 其他命令（stop/delete/restart/start 等）一律拒绝——防到期绕过与横向越权。
+  // admin 不受此限制（play.ts 内部调用走 callAsfCommand，不经此 HTTP 路径，不受影响）。
+  if (request.method === "POST" && path === "Api/Command" && user.role !== "admin") {
+    let cmd = "";
     try {
-      body = await request.arrayBuffer();
+      cmd = (JSON.parse(new TextDecoder().decode(body ?? new ArrayBuffer(0))).Command || "").trim();
     } catch {
-      body = undefined;
+      return fail("命令格式错误", 400);
+    }
+    // 仅放行：play <botname> <appid,appid,...> [可选显示名]
+    const m = /^play\s+(\S+)\s+(\d+(?:,\d+)*)(?:\s+(.+))?$/.exec(cmd);
+    if (!m) return fail("该操作未授权：普通用户仅允许 play 挂时长命令", 403);
+    const botName = m[1];
+    const acc = await env.DB.prepare(
+      `SELECT s.expires_at FROM steam_accounts a
+       LEFT JOIN account_slots s ON a.slot_id = s.id
+       WHERE a.current_server_id = ? AND a.bot_name = ? AND a.user_id = ?`
+    ).bind(serverId, botName, user.id).first<{ expires_at: string | null }>();
+    if (!acc) return fail("无权操作该 Bot", 403);
+    if (!acc.expires_at || new Date(acc.expires_at).getTime() < Date.now()) {
+      return fail(acc.expires_at ? "该账户使用时间已到期，请先兑换卡密" : "该账户暂无可用时间，请先兑换卡密", 409);
     }
   }
+
+  const method = request.method;
 
   const headers = new Headers();
   const contentType = request.headers.get("Content-Type");
