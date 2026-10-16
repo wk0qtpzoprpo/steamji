@@ -44,27 +44,41 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, data }) 
   const enc = await encryptData(password, env.ENCRYPT_KEY);
 
   // 3) 绑定栏位（槽位）：优先复用空槽位（继承其剩余时长），否则在配额内新建槽位
-  const slot = await env.DB.prepare(
-    `SELECT s.* FROM account_slots s
-     WHERE s.user_id = ? AND s.id NOT IN (
-       SELECT a.slot_id FROM steam_accounts a WHERE a.user_id = ? AND a.slot_id IS NOT NULL
-     )
-     ORDER BY s.slot_index LIMIT 1`
-  ).bind(user.id, user.id).first<{ id: number; slot_index: number; expires_at: string | null }>();
-  if (!slot) {
-    const cnt = await env.DB.prepare("SELECT COUNT(*) AS c FROM account_slots WHERE user_id = ?")
-      .bind(user.id).first<{ c: number }>();
-    const quotaRow = await env.DB.prepare("SELECT quota FROM users WHERE id = ?")
-      .bind(user.id).first<{ quota: number }>();
-    if (!quotaRow || (cnt?.c ?? 0) >= quotaRow.quota) return fail("已达账户额度上限，请在「兑换卡密」中增加额度", 409);
-    const idx = (cnt?.c ?? 0) + 1;
-    const insS = await env.DB.prepare("INSERT INTO account_slots (user_id, slot_index) VALUES (?, ?)")
-      .bind(user.id, idx).run();
-    return await insertAccount(env, user, botName, steamUsername, password, enc, server, onlineStatus, {
-      id: Number(insS.meta.last_row_id), slot_index: idx, expires_at: null,
-    });
+  //    并发安全：INSERT 带 slot 未占用条件，被抢时重选槽位重试一次
+  let slot: { id: number; slot_index: number; expires_at: string | null };
+  let lastResp: Response | null = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const picked = await env.DB.prepare(
+      `SELECT s.* FROM account_slots s
+       WHERE s.user_id = ? AND s.id NOT IN (
+         SELECT a.slot_id FROM steam_accounts a WHERE a.user_id = ? AND a.slot_id IS NOT NULL
+       )
+       ORDER BY s.slot_index LIMIT 1`
+    ).bind(user.id, user.id).first<{ id: number; slot_index: number; expires_at: string | null }>();
+
+    if (picked) {
+      slot = picked;
+    } else {
+      const cnt = await env.DB.prepare("SELECT COUNT(*) AS c FROM account_slots WHERE user_id = ?")
+        .bind(user.id).first<{ c: number }>();
+      const quotaRow = await env.DB.prepare("SELECT quota FROM users WHERE id = ?")
+        .bind(user.id).first<{ quota: number }>();
+      if (!quotaRow || (cnt?.c ?? 0) >= quotaRow.quota) return fail("已达账户额度上限，请在「兑换卡密」中增加额度", 409);
+      const idx = (cnt?.c ?? 0) + 1;
+      const insS = await env.DB.prepare("INSERT INTO account_slots (user_id, slot_index) VALUES (?, ?)")
+        .bind(user.id, idx).run();
+      slot = { id: Number(insS.meta.last_row_id), slot_index: idx, expires_at: null };
+    }
+
+    try {
+      return await insertAccount(env, user, botName, steamUsername, password, enc, server, onlineStatus, slot);
+    } catch (e) {
+      // 槽位被并发请求抢走：重选槽位再试一次
+      if (e instanceof Error && e.message === "SLOT_CONFLICT" && attempt === 0) continue;
+      throw e;
+    }
   }
-  return await insertAccount(env, user, botName, steamUsername, password, enc, server, onlineStatus, slot);
+  return lastResp ?? fail("添加失败，请重试", 500);
 }
 
 async function insertAccount(
@@ -72,13 +86,22 @@ async function insertAccount(
   enc: { iv: string; ct: string }, server: ServerRow, onlineStatus: number,
   slot: { id: number; slot_index: number; expires_at: string | null }
 ): Promise<Response> {
-  // 原子配额校验 + 插入（条件 INSERT，防并发超配；绑定 slot_id）
+  // 原子配额校验 + 槽位占用校验 + 插入（防并发超配、防并发绑同一槽位）
   const ins = await env.DB.prepare(
     `INSERT INTO steam_accounts (user_id, bot_name, steam_username, password_iv, password_ct, current_server_id, original_server_id, online_status, slot_id)
      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? FROM users
-     WHERE id = ? AND quota > (SELECT COUNT(*) FROM steam_accounts WHERE user_id = ?)`
-  ).bind(user.id, botName, steamUsername, enc.iv, enc.ct, server.id, server.id, onlineStatus, slot.id, user.id, user.id).run();
-  if (ins.meta.changes === 0) return fail("已达账户额度上限，请在「兑换卡密」中增加额度", 409);
+     WHERE id = ? AND quota > (SELECT COUNT(*) FROM steam_accounts WHERE user_id = ?)
+       AND NOT EXISTS (SELECT 1 FROM steam_accounts WHERE slot_id = ?)`
+  ).bind(user.id, botName, steamUsername, enc.iv, enc.ct, server.id, server.id, onlineStatus, slot.id, user.id, user.id, slot.id).run();
+  if (ins.meta.changes === 0) {
+    // 区分：配额已满 vs 槽位被并发抢走（后者交由上层重选槽位重试）
+    const quotaRow = await env.DB.prepare("SELECT quota FROM users WHERE id = ?").bind(user.id).first<{ quota: number }>();
+    const cntRow = await env.DB.prepare("SELECT COUNT(*) AS c FROM steam_accounts WHERE user_id = ?").bind(user.id).first<{ c: number }>();
+    if (!quotaRow || (cntRow?.c ?? 0) >= quotaRow.quota) {
+      return fail("已达账户额度上限，请在「兑换卡密」中增加额度", 409);
+    }
+    throw new Error("SLOT_CONFLICT");
+  }
 
   // 4) 通过 IPC 在目标服务器创建 bot（ASF V6：请求体为 BotConfig 对象）
   const createResp = await proxyToAsf(env, server, `Api/Bot/${encodeURIComponent(botName)}`, {

@@ -22,8 +22,19 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, data }) 
     const username = (body.username || "").trim();
     const password = body.password || "";
     if (!username || !password) return fail("到期续期需要提供用户名和密码");
+
+    // 与登录共用同一失败限流键（login_fail:{username}）：
+    // 否则本接口成为密码爆破旁路——未登录续期直接校验凭据且无锁定
+    const failKey = `login_fail:${username}`;
+    const fails = Number((await env.KV.get(failKey)) || "0");
+    if (fails >= 5) return fail("登录失败次数过多，请 15 分钟后再试", 429);
+
     const user = await env.DB.prepare("SELECT * FROM users WHERE username = ?").bind(username).first<UserRow>();
-    if (!user || !(await verifyPassword(password, user.password_hash))) return fail("用户名或密码错误", 401);
+    if (!user || !(await verifyPassword(password, user.password_hash))) {
+      await env.KV.put(failKey, String(fails + 1), { expirationTtl: 15 * 60 });
+      return fail("用户名或密码错误", 401);
+    }
+    await env.KV.delete(failKey);
     if (user.status === "disabled") return fail("账号已被禁用", 403);
     userId = user.id;
   }
@@ -56,6 +67,13 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, data }) 
     await env.DB.prepare("UPDATE invite_codes SET used_count = used_count - 1 WHERE id = ?").bind(card.id).run();
     return fail("续期失败，请重试");
   }
+
+  // 同步槽位级到期：账号级续期后，该用户所有栏位到期时间对齐到新到期
+  // （取较晚者，已更长的栏位不动）——消除"能登录但无法挂卡"的双轨割裂
+  await env.DB.prepare(
+    `UPDATE account_slots SET expires_at = ?
+     WHERE user_id = ? AND (expires_at IS NULL OR expires_at < ?)`
+  ).bind(newExpires, userId, newExpires).run();
 
   return ok({ expires_at: newExpires }, "续期成功");
 };

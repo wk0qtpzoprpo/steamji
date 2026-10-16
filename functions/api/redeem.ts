@@ -53,6 +53,17 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, data }) 
     await env.DB.prepare("UPDATE account_slots SET expires_at = ? WHERE id = ?")
       .bind(newExpiresAt, slotId).run();
 
+    // 同步账号级状态：槽位续期后账号恢复 active，
+    // 账号级到期时间与槽位新到期取较晚者——消除"槽位有时长但登不上"的双轨割裂
+    const cur = await env.DB.prepare("SELECT subscription_expires_at FROM users WHERE id = ?")
+      .bind(user.id).first<{ subscription_expires_at: string | null }>();
+    const accBaseMs = cur?.subscription_expires_at && cur.subscription_expires_at > new Date().toISOString()
+      ? new Date(cur.subscription_expires_at).getTime()
+      : Date.now();
+    const aligned = new Date(Math.max(accBaseMs, new Date(newExpiresAt).getTime())).toISOString();
+    await env.DB.prepare("UPDATE users SET subscription_expires_at = ?, subscription_status = 'active' WHERE id = ?")
+      .bind(aligned, user.id).run();
+
     return ok(
       { duration_days: card.duration_days, slot_id: slotId, expires_at: newExpiresAt },
       `兑换成功：栏位 #${slot.slot_index}${boundAcc ? `（${boundAcc.bot_name}）` : "（空栏位）"}使用时间已延长 ${card.duration_days} 天`
